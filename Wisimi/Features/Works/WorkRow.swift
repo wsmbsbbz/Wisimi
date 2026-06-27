@@ -104,7 +104,7 @@ private struct WorkChipsFlow: View {
     }
 }
 
-private struct VoiceActorChip: View {
+struct VoiceActorChip: View {
     let text: String
 
     var body: some View {
@@ -123,7 +123,7 @@ private struct VoiceActorChip: View {
     }
 }
 
-private struct CircleChip: View {
+struct CircleChip: View {
     let text: String
 
     var body: some View {
@@ -142,7 +142,7 @@ private struct CircleChip: View {
     }
 }
 
-private struct TagChip: View {
+struct TagChip: View {
     let text: String
 
     var body: some View {
@@ -161,7 +161,7 @@ private struct TagChip: View {
     }
 }
 
-private struct ChipFlowLayout: Layout {
+struct ChipFlowLayout: Layout {
     let spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

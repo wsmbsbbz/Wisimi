@@ -24,18 +24,6 @@ struct WorkDetailView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         DetailHero(work: work)
 
-                        if !work.vas.isEmpty || !work.tags.isEmpty {
-                            InfoCard {
-                                if !work.vas.isEmpty {
-                                    ChipSection(title: "声优", values: work.vas.map(\.name))
-                                }
-
-                                if !work.tags.isEmpty {
-                                    ChipSection(title: "标签", values: work.tags.map(\.name))
-                                }
-                            }
-                        }
-
                         InfoCard {
                             SectionHeader(title: "音轨", count: audioTracks.count)
                             if audioTracks.isEmpty {
@@ -84,43 +72,52 @@ struct DetailHero: View {
     let work: WorkDetail
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             CoverImage(url: work.mainCoverURL, cornerRadius: 18)
                 .aspectRatio(4 / 3, contentMode: .fit)
                 .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
 
-            VStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text(work.title)
-                    .font(.title2.weight(.semibold))
-                    .multilineTextAlignment(.center)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(10)
+                    .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(work.name)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 8) {
-                MetricPill(text: work.ratingText, systemImage: "star.fill", prominence: .strong)
-                MetricPill(text: work.durationText, systemImage: "clock", prominence: .strong)
-                MetricPill(text: "\(work.dlCount)", systemImage: "arrow.down.circle", prominence: .strong)
-                MetricPill(text: work.hasSubtitle ? "有字幕" : "无字幕", systemImage: "captions.bubble", prominence: .strong)
+                ChipFlowLayout(spacing: 6) {
+                    if let rateAverage = work.rateAverage, rateAverage > 0 {
+                        MetricPill(text: work.ratingText, systemImage: "star.fill", prominence: .strong)
+                    }
+
+                    MetricPill(text: work.durationText, systemImage: "clock", prominence: .strong)
+                    MetricPill(text: "\(work.dlCount)", systemImage: "arrow.down.circle", prominence: .strong)
+
+                    if work.hasSubtitle {
+                        MetricPill(text: "字幕", systemImage: "captions.bubble", prominence: .strong)
+                    }
+
+                    ForEach(work.vas) { actor in
+                        VoiceActorChip(text: actor.name)
+                    }
+
+                    CircleChip(text: work.name)
+
+                    ForEach(work.tags) { tag in
+                        TagChip(text: tag.name)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity)
+            .padding(12)
         }
         .frame(maxWidth: .infinity)
-        .padding(.bottom, 2)
-    }
-}
-
-struct ChipSection: View {
-    let title: String
-    let values: [String]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: title, count: values.count)
-            FlowLayout(values: values)
+        .background(.thinMaterial, in: .rect(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(.quaternary, lineWidth: 1)
         }
+        .clipShape(.rect(cornerRadius: 18))
+        .accessibilityElement(children: .combine)
     }
 }
