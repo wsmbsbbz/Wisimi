@@ -2,6 +2,18 @@ import Foundation
 
 struct WorksResponse: Decodable {
     let works: [WorkSummary]
+    let pagination: WorksPagination
+}
+
+struct WorksPagination: Decodable {
+    let currentPage: Int
+    let pageSize: Int
+    let totalCount: Int
+
+    var totalPages: Int {
+        guard pageSize > 0 else { return 1 }
+        return max(Int(ceil(Double(totalCount) / Double(pageSize))), 1)
+    }
 }
 
 struct WorkSummary: Decodable, Identifiable {
@@ -21,8 +33,7 @@ struct WorkSummary: Decodable, Identifiable {
     var voiceActorsText: String { vas.map(\.name).joined(separator: " / ") }
     var visibleVoiceActors: [String] { vas.prefix(2).map(\.name) }
     var hiddenVoiceActorCount: Int { max(vas.count - visibleVoiceActors.count, 0) }
-    var visibleTags: [String] { tags.prefix(5).map(\.name) }
-    var hiddenTagCount: Int { max(tags.count - visibleTags.count, 0) }
+    var visibleTags: [String] { tags.map(\.name) }
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -110,11 +121,13 @@ struct FlexibleID: Decodable, Hashable {
 enum DecodeSelfCheck {
     static func run() {
         let decoder = JSONDecoder()
-        let list = #"{"works":[{"id":1,"title":"Work","name":"Circle","duration":90,"rate_average_2dp":4.8,"has_subtitle":true,"thumbnailCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}]}"#
+        let list = #"{"works":[{"id":1,"title":"Work","name":"Circle","duration":90,"rate_average_2dp":4.8,"has_subtitle":true,"thumbnailCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}],"pagination":{"currentPage":1,"pageSize":20,"totalCount":42}}"#
         let detail = #"{"id":1,"title":"Work","name":"Circle","duration":90,"dl_count":2,"rate_average_2dp":4.8,"has_subtitle":true,"mainCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}"#
         let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4}]}]"#
 
-        assert((try? decoder.decode(WorksResponse.self, from: Data(list.utf8)))?.works.count == 1)
+        let worksResponse = try? decoder.decode(WorksResponse.self, from: Data(list.utf8))
+        assert(worksResponse?.works.count == 1)
+        assert(worksResponse?.pagination.totalPages == 3)
         assert((try? decoder.decode(WorkDetail.self, from: Data(detail.utf8)))?.tags.first?.name == "耳かき")
         assert((try? decoder.decode([TrackNode].self, from: Data(tracks.utf8)))?.audioTracks.count == 1)
     }

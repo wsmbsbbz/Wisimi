@@ -4,15 +4,14 @@ struct ASMRClient {
     private let baseURL = URL(string: "https://api.asmr-200.com/api")!
     private let decoder = JSONDecoder()
 
-    func fetchWorks(page: Int = 1) async throws -> [WorkSummary] {
+    func fetchWorks(page: Int = 1) async throws -> WorksResponse {
         var components = URLComponents(url: baseURL.appending(path: "works"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "order", value: "create_date"),
             URLQueryItem(name: "sort", value: "desc"),
             URLQueryItem(name: "page", value: String(page))
         ]
-        let response: WorksResponse = try await fetch(components.url!)
-        return response.works
+        return try await fetch(components.url!)
     }
 
     func fetchWork(id: Int) async throws -> WorkDetail {
