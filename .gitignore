@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Xcode user state
+*.xcuserstate
+xcuserdata/
+*.xcuserdatad/
+
+# Xcode build products
+DerivedData/
+build/
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# Dependency managers, currently unused
+Pods/
+Carthage/Build/
+
+# Local env / secrets
+.env
+.env.*
+*.xcconfig.local
+
+# Local scratch / private references
+tmp/
+doc/
+requirement/
+
+# Logs
+*.log
