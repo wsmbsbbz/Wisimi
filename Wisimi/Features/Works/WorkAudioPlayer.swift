@@ -1,6 +1,10 @@
 import AVFoundation
 import Combine
 import Foundation
+#if os(iOS)
+import MediaPlayer
+import UIKit
+#endif
 
 @MainActor
 final class WorkAudioPlayer: ObservableObject {
@@ -21,11 +25,25 @@ final class WorkAudioPlayer: ObservableObject {
     private var siblings: [TrackNode] = []
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
+    private var playerStatusCancellable: AnyCancellable?
     private var loadTask: Task<Void, Never>?
+    private var artworkTask: Task<Void, Never>?
+    private var nowPlayingArtworkURL: URL?
+    private var wasPlayingBeforeInterruption = false
+    private var isActivatingAudioSession = false
+    private var shouldPlayAfterActivation = false
 
     init(client: ASMRClient) {
         self.client = client
         configureAudioSession()
+        configureRemoteCommands()
+        observeAudioSession()
+        playerStatusCancellable = player.publisher(for: \.timeControlStatus)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.syncProgress() }
+            }
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
             Task { @MainActor in self?.syncProgress() }
         }
@@ -54,11 +72,9 @@ final class WorkAudioPlayer: ObservableObject {
 
     func togglePlay() {
         if isPlaying {
-            player.pause()
-            isPlaying = false
+            pauseCurrent()
         } else {
-            player.play()
-            isPlaying = true
+            playCurrent()
         }
     }
 
@@ -70,8 +86,7 @@ final class WorkAudioPlayer: ObservableObject {
 
     func next() {
         guard currentIndex + 1 < queue.count else {
-            player.pause()
-            isPlaying = false
+            pauseCurrent()
             return
         }
         currentIndex += 1
@@ -83,6 +98,7 @@ final class WorkAudioPlayer: ObservableObject {
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
         position = target
         updateSubtitle()
+        updateNowPlaying()
     }
 
     func seek(to subtitle: SubtitleLine) {
@@ -120,8 +136,9 @@ final class WorkAudioPlayer: ObservableObject {
         }
 
         if autoPlay {
-            player.play()
-            isPlaying = true
+            playCurrent()
+        } else {
+            updateNowPlaying()
         }
     }
 
@@ -136,6 +153,7 @@ final class WorkAudioPlayer: ObservableObject {
         }
         isPlaying = player.timeControlStatus == .playing
         updateSubtitle()
+        updateNowPlaying()
     }
 
     private func updateSubtitle() {
@@ -145,7 +163,158 @@ final class WorkAudioPlayer: ObservableObject {
     private func configureAudioSession() {
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
+    }
+
+    private func playCurrent() {
+        shouldPlayAfterActivation = true
+        activateAudioSession { [weak self] activated in
+            guard let self, activated, self.shouldPlayAfterActivation else { return }
+            shouldPlayAfterActivation = false
+            player.play()
+            syncProgress()
+        }
+    }
+
+    private func pauseCurrent() {
+        shouldPlayAfterActivation = false
+        player.pause()
+        syncProgress()
+    }
+
+    private func activateAudioSession(then action: @escaping @MainActor (Bool) -> Void) {
+        #if os(iOS)
+        guard !isActivatingAudioSession else { return }
+        isActivatingAudioSession = true
+        AVAudioSession.sharedInstance().activate(options: []) { [weak self] activated, error in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isActivatingAudioSession = false
+                if let error {
+                    print("Audio session activation failed: \(error.localizedDescription)")
+                }
+                action(activated)
+            }
+        }
+        #else
+        action(true)
+        #endif
+    }
+
+    private func updateNowPlaying() {
+        #if os(iOS)
+        guard let currentTrack else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPMediaItemPropertyTitle] = currentTrack.title
+        info[MPMediaItemPropertyAlbumTitle] = workTitle
+        info[MPMediaItemPropertyArtist] = circleName
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1 : 0
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        loadArtworkIfNeeded()
+        #endif
+    }
+
+    private func loadArtworkIfNeeded() {
+        #if os(iOS)
+        guard nowPlayingArtworkURL != coverURL else { return }
+        nowPlayingArtworkURL = coverURL
+        artworkTask?.cancel()
+        guard let coverURL else { return }
+
+        artworkTask = Task { [coverURL] in
+            guard let (data, _) = try? await URLSession.shared.data(from: coverURL),
+                  !Task.isCancelled,
+                  let image = UIImage(data: data) else { return }
+
+            await MainActor.run {
+                guard self.coverURL == coverURL else { return }
+                var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            }
+        }
+        #endif
+    }
+
+    private func configureRemoteCommands() {
+        #if os(iOS)
+        let commands = MPRemoteCommandCenter.shared()
+
+        commands.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.playCurrent() }
+            return .success
+        }
+        commands.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.pauseCurrent() }
+            return .success
+        }
+        commands.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.next() }
+            return .success
+        }
+        commands.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.previous() }
+            return .success
+        }
+        commands.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            Task { @MainActor in self?.seek(to: event.positionTime) }
+            return .success
+        }
+        #endif
+    }
+
+    private func observeAudioSession() {
+        #if os(iOS)
+        let center = NotificationCenter.default
+        interruptionObserver = center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+
+            Task { @MainActor in
+                switch type {
+                case .began:
+                    self.wasPlayingBeforeInterruption = self.isPlaying
+                    self.pauseCurrent()
+                case .ended:
+                    let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                    let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+                    if options.contains(.shouldResume), self.wasPlayingBeforeInterruption {
+                        self.playCurrent()
+                    } else {
+                        self.updateNowPlaying()
+                    }
+                    self.wasPlayingBeforeInterruption = false
+                @unknown default:
+                    self.updateNowPlaying()
+                }
+            }
+        }
+
+        routeChangeObserver = center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  AVAudioSession.RouteChangeReason(rawValue: rawReason) == .oldDeviceUnavailable else { return }
+            let previousRoute = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+            guard previousRoute?.outputs.contains(where: \.isDisconnectableAudioOutput) == true else { return }
+            Task { @MainActor in self?.pauseCurrent() }
+        }
         #endif
     }
 
@@ -232,6 +401,14 @@ private extension String {
         return String(self[range])
     }
 }
+
+#if os(iOS)
+private extension AVAudioSessionPortDescription {
+    var isDisconnectableAudioOutput: Bool {
+        [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .headphones].contains(portType)
+    }
+}
+#endif
 
 #if DEBUG
 enum AudioPlayerSelfCheck {
