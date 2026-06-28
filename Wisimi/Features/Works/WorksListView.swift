@@ -3,6 +3,7 @@ import SwiftUI
 struct WorksListView: View {
     private let client: ASMRClient
     @StateObject private var player: WorkAudioPlayer
+    @StateObject private var auth: AuthSession
     @State private var path: [WorksRoute] = []
     @State private var works: [WorkSummary] = []
     @State private var pagination: WorksPagination?
@@ -14,13 +15,15 @@ struct WorksListView: View {
     @State private var activeSearchText = ""
     @State private var filter = WorksFilter.default
     @State private var isFilterPresented = false
-    @State private var unavailableMode: WorksMode?
+    @State private var isLoginPresented = false
+    @State private var pendingMode: WorksMode?
     @FocusState private var isSearchFocused: Bool
 
     init() {
         let client = ASMRClient()
         self.client = client
         _player = StateObject(wrappedValue: WorkAudioPlayer(client: client))
+        _auth = StateObject(wrappedValue: AuthSession(client: client))
     }
 
     var body: some View {
@@ -89,8 +92,32 @@ struct WorksListView: View {
                 }
             }
             .toolbar {
-                if isLoading && !works.isEmpty {
-                    ProgressView()
+                ToolbarItem(placement: .topBarLeading) {
+                    if auth.isLoggedIn {
+                        Menu {
+                            Button("退出登录", role: .destructive) {
+                                auth.logout()
+                                if selectedMode.requiresLogin {
+                                    selectedMode = .latest
+                                    Task { await reloadFromFirstPage() }
+                                }
+                            }
+                        } label: {
+                            Label(auth.username ?? "已登录", systemImage: "person.crop.circle.fill")
+                        }
+                    } else {
+                        Button {
+                            isLoginPresented = true
+                        } label: {
+                            Label("登录", systemImage: "person.crop.circle")
+                        }
+                    }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    if isLoading && !works.isEmpty {
+                        ProgressView()
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -122,10 +149,14 @@ struct WorksListView: View {
                 }
                 .presentationDetents([.medium, .large])
             }
-            .alert("暂未接入", item: $unavailableMode) { _ in
-                Button("知道了", role: .cancel) {}
-            } message: { mode in
-                Text("\(mode.title) 菜单已预留，等登录/推荐体系接入后启用。")
+            .sheet(isPresented: $isLoginPresented) {
+                LoginSheet(auth: auth) {
+                    if let mode = pendingMode {
+                        pendingMode = nil
+                        selectMode(mode)
+                    }
+                }
+                    .presentationDetents([.medium])
             }
         }
         .task {
@@ -165,8 +196,9 @@ struct WorksListView: View {
     }
 
     private func selectMode(_ mode: WorksMode) {
-        guard mode.isAvailable else {
-            unavailableMode = mode
+        guard !mode.requiresLogin || auth.isLoggedIn else {
+            pendingMode = mode
+            isLoginPresented = true
             return
         }
 
@@ -199,8 +231,13 @@ struct WorksListView: View {
                     response = try await client.fetchWorks(page: page, filter: filter)
                 case .popular:
                     response = try await client.fetchPopular(page: page, filter: filter)
-                case .favorites, .recommended:
-                    response = try await client.fetchWorks(page: page, filter: filter)
+                case .favorites:
+                    guard let token = auth.token else { throw ASMRClientError.loginRequired }
+                    response = try await client.fetchFavorites(page: page, token: token)
+                case .recommended:
+                    guard let token = auth.token else { throw ASMRClientError.loginRequired }
+                    guard let uuid = auth.recommenderUuid, !uuid.isEmpty else { throw ASMRClientError.missingRecommenderUuid }
+                    response = try await client.fetchRecommended(page: page, uuid: uuid, token: token, filter: filter)
                 }
             }
             works = response.works
@@ -244,10 +281,66 @@ private enum WorksMode: String, CaseIterable, Identifiable {
         }
     }
 
-    var isAvailable: Bool {
+    var requiresLogin: Bool {
         switch self {
-        case .latest, .popular: true
-        case .favorites, .recommended: false
+        case .latest, .popular: false
+        case .favorites, .recommended: true
+        }
+    }
+}
+
+private struct LoginSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var auth: AuthSession
+    let onSuccess: () -> Void
+    @State private var name = ""
+    @State private var password = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("用户名", text: $name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    SecureField("密码", text: $password)
+                }
+
+                if let errorMessage = auth.errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("登录")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task {
+                            await auth.login(name: name, password: password)
+                            if auth.isLoggedIn {
+                                dismiss()
+                                onSuccess()
+                            }
+                        }
+                    } label: {
+                        if auth.isLoading {
+                            ProgressView()
+                        } else {
+                            Text("登录")
+                        }
+                    }
+                    .disabled(auth.isLoading || name.isEmpty || password.isEmpty)
+                }
+            }
         }
     }
 }

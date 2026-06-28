@@ -4,6 +4,13 @@ struct ASMRClient {
     private let baseURL = URL(string: "https://api.asmr-200.com/api")!
     private let decoder = JSONDecoder()
 
+    func login(name: String, password: String) async throws -> AuthResponse {
+        try await postJSON(
+            baseURL.appending(path: "auth/me"),
+            body: LoginRequest(name: name, password: password)
+        )
+    }
+
     func fetchWorks(page: Int = 1, filter: WorksFilter = .default) async throws -> WorksResponse {
         var components = URLComponents(url: baseURL.appending(path: "works"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
@@ -39,6 +46,24 @@ struct ASMRClient {
         )
     }
 
+    func fetchFavorites(page: Int = 1, token: String) async throws -> WorksResponse {
+        var components = URLComponents(url: baseURL.appending(path: "review"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "order", value: "updated_at"),
+            URLQueryItem(name: "sort", value: "desc")
+        ]
+        return try await fetch(components.url!, token: token)
+    }
+
+    func fetchRecommended(page: Int = 1, uuid: String, token: String, filter: WorksFilter = .default) async throws -> WorksResponse {
+        try await postJSON(
+            baseURL.appending(path: "recommender/recommend-for-user"),
+            body: RecommendedRequest(userId: uuid, page: page, subtitle: filter.hasSubtitle ? 1 : 0),
+            token: token
+        )
+    }
+
     func fetchWork(id: Int) async throws -> WorkDetail {
         try await fetch(baseURL.appending(path: "work/\(id)"))
     }
@@ -57,18 +82,25 @@ struct ASMRClient {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private func fetch<T: Decodable>(_ url: URL) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(from: url)
+    private func fetch<T: Decodable>(_ url: URL, token: String? = nil) async throws -> T {
+        var request = URLRequest(url: url)
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
             throw ASMRClientError.badResponse
         }
         return try decoder.decode(T.self, from: data)
     }
 
-    private func postJSON<T: Decodable, Body: Encodable>(_ url: URL, body: Body) async throws -> T {
+    private func postJSON<T: Decodable, Body: Encodable>(_ url: URL, body: Body, token: String? = nil) async throws -> T {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -77,6 +109,11 @@ struct ASMRClient {
         }
         return try decoder.decode(T.self, from: data)
     }
+}
+
+private struct LoginRequest: Encodable {
+    let name: String
+    let password: String
 }
 
 struct WorksFilter: Equatable, Sendable {
@@ -139,10 +176,25 @@ private struct PopularRequest: Encodable {
     let withPlaylistStatus: [Int] = []
 }
 
+private struct RecommendedRequest: Encodable {
+    let keyword = " "
+    let userId: String
+    let page: Int
+    let subtitle: Int
+    let localSubtitledWorks: [Int] = []
+    let withPlaylistStatus: [Int] = []
+}
+
 enum ASMRClientError: LocalizedError {
     case badResponse
+    case loginRequired
+    case missingRecommenderUuid
 
     var errorDescription: String? {
-        "接口返回异常"
+        switch self {
+        case .badResponse: "接口返回异常"
+        case .loginRequired: "请先登录"
+        case .missingRecommenderUuid: "当前账号缺少推荐标识"
+        }
     }
 }
