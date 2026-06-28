@@ -1,0 +1,190 @@
+import SwiftUI
+
+struct PlayerView: View {
+    @ObservedObject var player: WorkAudioPlayer
+    @State private var isShowingSubtitles = false
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 22) {
+                PlayerArtworkOrSubtitles(player: player, isShowingSubtitles: $isShowingSubtitles)
+
+                VStack(spacing: 6) {
+                    Text(player.currentTrack?.title ?? "未播放")
+                        .font(.title3.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                    Text(player.circleName)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                PlayerProgress(player: player)
+                PlayerControls(player: player)
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+        }
+        .navigationTitle("播放器")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct PlayerArtworkOrSubtitles: View {
+    @ObservedObject var player: WorkAudioPlayer
+    @Binding var isShowingSubtitles: Bool
+
+    var body: some View {
+        Group {
+            if isShowingSubtitles {
+                SubtitleListView(player: player) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        isShowingSubtitles = false
+                    }
+                }
+            } else {
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        isShowingSubtitles = true
+                    }
+                } label: {
+                    CoverImage(url: player.coverURL, cornerRadius: 20)
+                        .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .containerRelativeFrame(.horizontal) { length, _ in
+            min(length - 32, 420)
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct PlayerProgress: View {
+    @ObservedObject var player: WorkAudioPlayer
+    @State private var isSeeking = false
+    @State private var seekValue: TimeInterval = 0
+
+    private var value: Binding<Double> {
+        Binding {
+            isSeeking ? seekValue : player.position
+        } set: { newValue in
+            seekValue = newValue
+            isSeeking = true
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Slider(value: value, in: 0...max(player.duration, 1)) { editing in
+                if editing {
+                    isSeeking = true
+                } else {
+                    player.seek(to: seekValue)
+                    isSeeking = false
+                }
+            }
+
+            HStack {
+                Text((isSeeking ? seekValue : player.position).formattedDuration)
+                Spacer()
+                Text(player.duration.formattedDuration)
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct PlayerControls: View {
+    @ObservedObject var player: WorkAudioPlayer
+
+    var body: some View {
+        HStack(spacing: 28) {
+            Button {
+                player.previous()
+            } label: {
+                Image(systemName: "backward.fill")
+                    .font(.title2)
+                    .frame(width: 44, height: 44)
+            }
+
+            Button {
+                player.togglePlay()
+            } label: {
+                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 64))
+            }
+
+            Button {
+                player.next()
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(.title2)
+                    .frame(width: 44, height: 44)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SubtitleListView: View {
+    @ObservedObject var player: WorkAudioPlayer
+    let hideSubtitles: () -> Void
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ZStack {
+                Color.clear
+
+                if player.subtitles.isEmpty {
+                    Text("暂无字幕")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(Array(player.subtitles.enumerated()), id: \.element.id) { index, subtitle in
+                                Button {
+                                    player.seek(to: subtitle)
+                                } label: {
+                                    Text(subtitle.text)
+                                        .font(.subheadline)
+                                        .fontWeight(index == player.currentSubtitleIndex ? .semibold : .regular)
+                                        .foregroundStyle(index == player.currentSubtitleIndex ? .primary : .secondary)
+                                        .multilineTextAlignment(.center)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 8)
+                                        .animation(.easeOut(duration: 0.25), value: player.currentSubtitleIndex)
+                                }
+                                .buttonStyle(.plain)
+                                .id(index)
+                            }
+                        }
+                        .padding(.vertical, 18)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(.rect)
+            .gesture(
+                TapGesture().onEnded(hideSubtitles),
+                including: .gesture
+            )
+            .background(.thinMaterial, in: .rect(cornerRadius: 20))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(.quaternary, lineWidth: 1)
+            }
+            .clipShape(.rect(cornerRadius: 20))
+            .onChange(of: player.currentSubtitleIndex) {
+                guard let index = player.currentSubtitleIndex else { return }
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(index, anchor: .center)
+                }
+            }
+        }
+    }
+}

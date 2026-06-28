@@ -61,6 +61,7 @@ struct WorkDetail: Decodable {
     let vas: [NameItem]
 
     var mainCoverURL: URL? { mainCover.flatMap(URL.init(string:)) }
+    var rjCode: String { "RJ\(id)" }
     var ratingText: String { rateAverage.map { String(format: "%.1f", $0) } ?? "-" }
     var durationText: String { duration.formattedDuration }
 
@@ -89,18 +90,35 @@ struct TrackNode: Decodable, Identifiable {
     let hash: String?
     let duration: Double?
     let children: [TrackNode]?
+    let mediaStreamUrl: String?
+    let mediaDownloadUrl: String?
+    let size: Int?
 
     var id: String { hash ?? "\(type)-\(title)" }
+    var isAudio: Bool { type == "audio" }
+    var isFolder: Bool { type == "folder" }
+    var isSubtitle: Bool { title.lowercased().hasSuffix(".vtt") || title.lowercased().hasSuffix(".lrc") }
+    var isImage: Bool {
+        [".jpg", ".jpeg", ".png", ".webp", ".gif"].contains { title.lowercased().hasSuffix($0) }
+    }
+    var audioURL: URL? {
+        (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
+    }
+    var downloadURL: URL? { mediaDownloadUrl.flatMap(URL.init(string:)) }
     var durationText: String { duration.formattedDuration }
 }
 
 extension Array where Element == TrackNode {
     var audioTracks: [TrackNode] {
         flatMap { node in
-            var result = node.type == "audio" ? [node] : []
+            var result = node.isAudio ? [node] : []
             result += node.children?.audioTracks ?? []
             return result
         }
+    }
+
+    var defaultDirectoryPath: [TrackNode] {
+        count == 1 && self[0].isFolder ? [self[0]] : []
     }
 }
 
@@ -123,13 +141,17 @@ enum DecodeSelfCheck {
         let decoder = JSONDecoder()
         let list = #"{"works":[{"id":1,"title":"Work","name":"Circle","duration":90,"rate_average_2dp":4.8,"has_subtitle":true,"thumbnailCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}],"pagination":{"currentPage":1,"pageSize":20,"totalCount":42}}"#
         let detail = #"{"id":1,"title":"Work","name":"Circle","duration":90,"dl_count":2,"rate_average_2dp":4.8,"has_subtitle":true,"mainCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}"#
-        let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4}]}]"#
+        let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4,"mediaDownloadUrl":"https://example.com/01.mp3"},{"type":"text","title":"01.vtt","mediaDownloadUrl":"https://example.com/01.vtt"},{"type":"image","title":"cover.jpg"}]}]"#
 
         let worksResponse = try? decoder.decode(WorksResponse.self, from: Data(list.utf8))
         assert(worksResponse?.works.count == 1)
         assert(worksResponse?.pagination.totalPages == 3)
         assert((try? decoder.decode(WorkDetail.self, from: Data(detail.utf8)))?.tags.first?.name == "耳かき")
-        assert((try? decoder.decode([TrackNode].self, from: Data(tracks.utf8)))?.audioTracks.count == 1)
+        let decodedTracks = try? decoder.decode([TrackNode].self, from: Data(tracks.utf8))
+        assert(decodedTracks?.audioTracks.count == 1)
+        assert(decodedTracks?.defaultDirectoryPath.first?.children?.first?.isAudio == true)
+        assert(decodedTracks?.defaultDirectoryPath.first?.children?[1].isSubtitle == true)
+        assert(decodedTracks?.defaultDirectoryPath.first?.children?[2].isImage == true)
     }
 }
 #endif

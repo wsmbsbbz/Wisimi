@@ -1,14 +1,21 @@
 import SwiftUI
 
 struct WorksListView: View {
+    private let client: ASMRClient
+    @StateObject private var player: WorkAudioPlayer
     @State private var works: [WorkSummary] = []
     @State private var pagination: WorksPagination?
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var selectedWorkID: Int?
+    @State private var isShowingPlayer = false
     @State private var currentPage = 1
 
-    private let client = ASMRClient()
+    init() {
+        let client = ASMRClient()
+        self.client = client
+        _player = StateObject(wrappedValue: WorkAudioPlayer(client: client))
+    }
 
     var body: some View {
         NavigationStack {
@@ -69,7 +76,17 @@ struct WorksListView: View {
             }
             .navigationDestination(isPresented: isShowingDetail) {
                 if let selectedWorkID {
-                    WorkDetailView(workID: selectedWorkID, client: client)
+                    WorkDetailView(workID: selectedWorkID, client: client, player: player)
+                }
+            }
+            .navigationDestination(isPresented: $isShowingPlayer) {
+                PlayerView(player: player)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if player.currentTrack != nil {
+                MiniPlayerBar(player: player) {
+                    isShowingPlayer = true
                 }
             }
         }
@@ -104,6 +121,47 @@ struct WorksListView: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+}
+
+private struct MiniPlayerBar: View {
+    @ObservedObject var player: WorkAudioPlayer
+    let openPlayer: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: openPlayer) {
+                HStack(spacing: 10) {
+                    CoverImage(url: player.coverURL, cornerRadius: 6, size: CGSize(width: 42, height: 42))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(player.currentTrack?.title ?? "未播放")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(player.currentSubtitle?.text ?? player.workTitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                player.togglePlay()
+            } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.thinMaterial)
     }
 }
 

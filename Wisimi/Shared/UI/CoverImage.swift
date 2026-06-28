@@ -21,7 +21,7 @@ struct CoverImage: View {
             }
         }
         .frame(width: size?.width, height: size?.height)
-        .frame(maxWidth: size == nil ? .infinity : nil, maxHeight: size == nil ? .infinity : nil)
+        .frame(maxWidth: size == nil ? .infinity : nil)
         .background(.quaternary)
         .clipShape(.rect(cornerRadius: cornerRadius))
         .clipped()

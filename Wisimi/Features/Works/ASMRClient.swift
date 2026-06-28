@@ -19,7 +19,17 @@ struct ASMRClient {
     }
 
     func fetchTracks(workID: Int) async throws -> [TrackNode] {
-        try await fetch(baseURL.appending(path: "tracks/\(workID)"))
+        var components = URLComponents(url: baseURL.appending(path: "tracks/\(workID)"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "v", value: "2")]
+        return try await fetch(components.url!)
+    }
+
+    func fetchText(_ url: URL) async throws -> String {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
+            throw ASMRClientError.badResponse
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func fetch<T: Decodable>(_ url: URL) async throws -> T {

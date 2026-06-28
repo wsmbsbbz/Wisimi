@@ -1,11 +1,11 @@
 import SwiftUI
 
-struct TrackRow: View {
+struct TrackNodeRow: View {
     let track: TrackNode
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "music.note")
+            Image(systemName: iconName)
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 28, height: 28)
@@ -15,13 +15,23 @@ struct TrackRow: View {
                 Text(track.title)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(2)
-                Text(track.durationText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if track.isAudio {
+                    Text(track.durationText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
         }
         .padding(10)
         .background(.background.opacity(0.65), in: .rect(cornerRadius: 12))
+    }
+
+    private var iconName: String {
+        if track.isFolder { return "folder" }
+        if track.isAudio { return "play.circle" }
+        if track.isSubtitle { return "captions.bubble" }
+        if track.isImage { return "photo" }
+        return "doc"
     }
 }

@@ -5,6 +5,7 @@ struct WisimiApp: App {
     init() {
         #if DEBUG
         DecodeSelfCheck.run()
+        AudioPlayerSelfCheck.run()
         #endif
     }
 
