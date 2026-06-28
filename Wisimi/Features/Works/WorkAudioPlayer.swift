@@ -6,6 +6,7 @@ import Foundation
 final class WorkAudioPlayer: ObservableObject {
     @Published var queue: [TrackNode] = []
     @Published var currentIndex = 0
+    @Published var workID: Int?
     @Published var workTitle = ""
     @Published var circleName = ""
     @Published var coverURL: URL?
@@ -44,6 +45,7 @@ final class WorkAudioPlayer: ObservableObject {
         self.queue = queue
         self.siblings = siblings
         currentIndex = index
+        workID = work.id
         workTitle = work.title
         circleName = work.name
         coverURL = work.mainCoverURL

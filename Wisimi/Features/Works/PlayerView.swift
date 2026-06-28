@@ -5,33 +5,27 @@ struct PlayerView: View {
     @State private var isShowingSubtitles = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                PlayerArtworkOrSubtitles(player: player, isShowingSubtitles: $isShowingSubtitles)
+        VStack(spacing: 0) {
+            PlayerMainContent(player: player, isShowingSubtitles: $isShowingSubtitles)
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
 
-                VStack(spacing: 6) {
-                    Text(player.currentTrack?.title ?? "未播放")
-                        .font(.title3.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
-                    Text(player.circleName)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
+            VStack(spacing: 14) {
                 PlayerProgress(player: player)
                 PlayerControls(player: player)
             }
-            .frame(maxWidth: .infinity)
-            .padding()
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
         }
         .navigationTitle("播放器")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-private struct PlayerArtworkOrSubtitles: View {
+private struct PlayerMainContent: View {
     @ObservedObject var player: WorkAudioPlayer
     @Binding var isShowingSubtitles: Bool
 
@@ -44,21 +38,49 @@ private struct PlayerArtworkOrSubtitles: View {
                     }
                 }
             } else {
+                PlayerCoverContent(player: player, isShowingSubtitles: $isShowingSubtitles)
+            }
+        }
+    }
+}
+
+private struct PlayerCoverContent: View {
+    @ObservedObject var player: WorkAudioPlayer
+    @Binding var isShowingSubtitles: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let coverWidth = min(max(proxy.size.width - 32, 0), max(proxy.size.height - 112, 0) * 4 / 3, 420)
+            let coverSize = CGSize(width: coverWidth, height: coverWidth * 3 / 4)
+
+            VStack(spacing: 18) {
+                Spacer(minLength: 0)
+
                 Button {
                     withAnimation(.easeOut(duration: 0.2)) {
                         isShowingSubtitles = true
                     }
                 } label: {
-                    CoverImage(url: player.coverURL, cornerRadius: 20)
+                    CoverImage(url: player.coverURL, cornerRadius: 20, size: coverSize)
                         .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
                 }
                 .buttonStyle(.plain)
+
+                VStack(spacing: 6) {
+                    Text(player.currentTrack?.title ?? "未播放")
+                        .font(.title3.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                    Text(player.circleName)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .containerRelativeFrame(.horizontal) { length, _ in
-            min(length - 32, 420)
-        }
-        .aspectRatio(1, contentMode: .fit)
     }
 }
 

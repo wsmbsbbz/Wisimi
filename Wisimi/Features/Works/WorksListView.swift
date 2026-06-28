@@ -3,12 +3,11 @@ import SwiftUI
 struct WorksListView: View {
     private let client: ASMRClient
     @StateObject private var player: WorkAudioPlayer
+    @State private var path: [WorksRoute] = []
     @State private var works: [WorkSummary] = []
     @State private var pagination: WorksPagination?
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var selectedWorkID: Int?
-    @State private var isShowingPlayer = false
     @State private var currentPage = 1
 
     init() {
@@ -18,7 +17,7 @@ struct WorksListView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if isLoading && works.isEmpty {
                     ProgressView("加载作品中...")
@@ -39,7 +38,7 @@ struct WorksListView: View {
 
                             VStack(spacing: 18) {
                                 MasonryGrid(works: works) { work in
-                                    selectedWorkID = work.id
+                                    path.append(.detail(work.id))
                                 }
 
                                 PaginationControls(
@@ -74,19 +73,26 @@ struct WorksListView: View {
                     ProgressView()
                 }
             }
-            .navigationDestination(isPresented: isShowingDetail) {
-                if let selectedWorkID {
-                    WorkDetailView(workID: selectedWorkID, client: client, player: player)
+            .safeAreaInset(edge: .bottom) {
+                if player.currentTrack != nil {
+                    MiniPlayerBar(player: player) {
+                        openPlayer()
+                    }
                 }
             }
-            .navigationDestination(isPresented: $isShowingPlayer) {
-                PlayerView(player: player)
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            if player.currentTrack != nil {
-                MiniPlayerBar(player: player) {
-                    isShowingPlayer = true
+            .navigationDestination(for: WorksRoute.self) { route in
+                switch route {
+                case .detail(let workID):
+                    WorkDetailView(workID: workID, client: client, player: player)
+                        .safeAreaInset(edge: .bottom) {
+                            if player.currentTrack != nil {
+                                MiniPlayerBar(player: player) {
+                                    openPlayer(from: workID)
+                                }
+                            }
+                        }
+                case .player:
+                    PlayerView(player: player)
                 }
             }
         }
@@ -95,13 +101,16 @@ struct WorksListView: View {
         }
     }
 
-    private var isShowingDetail: Binding<Bool> {
-        Binding {
-            selectedWorkID != nil
-        } set: { isPresented in
-            if !isPresented {
-                selectedWorkID = nil
-            }
+    private func openPlayer(from detailWorkID: Int? = nil) {
+        guard let workID = player.workID else {
+            path.append(.player)
+            return
+        }
+
+        if detailWorkID == workID {
+            path.append(.player)
+        } else {
+            path = [.detail(workID), .player]
         }
     }
 
@@ -122,6 +131,11 @@ struct WorksListView: View {
         }
         isLoading = false
     }
+}
+
+private enum WorksRoute: Hashable {
+    case detail(Int)
+    case player
 }
 
 private struct MiniPlayerBar: View {
