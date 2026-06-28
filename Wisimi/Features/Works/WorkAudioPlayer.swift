@@ -34,6 +34,7 @@ final class WorkAudioPlayer: ObservableObject {
     private var wasPlayingBeforeInterruption = false
     private var isActivatingAudioSession = false
     private var shouldPlayAfterActivation = false
+    private var lastSavedPosition: TimeInterval = -1
 
     init(client: ASMRClient) {
         self.client = client
@@ -47,6 +48,7 @@ final class WorkAudioPlayer: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
             Task { @MainActor in self?.syncProgress() }
         }
+        Task { await restorePlayback() }
     }
 
     var currentTrack: TrackNode? {
@@ -99,23 +101,26 @@ final class WorkAudioPlayer: ObservableObject {
         position = target
         updateSubtitle()
         updateNowPlaying()
+        savePlayback(force: true)
     }
 
     func seek(to subtitle: SubtitleLine) {
         seek(to: subtitle.start)
     }
 
-    private func loadCurrent(siblings: [TrackNode], autoPlay: Bool) {
+    private func loadCurrent(siblings: [TrackNode], autoPlay: Bool, resumePosition: TimeInterval = 0) {
         loadTask?.cancel()
         guard let track = currentTrack, let url = track.audioURL else { return }
 
         endObserver.map(NotificationCenter.default.removeObserver)
         let item = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: item)
-        position = 0
+        position = max(0, min(resumePosition, track.duration ?? resumePosition))
         duration = track.duration ?? 0
         subtitles = []
         currentSubtitleIndex = nil
+        player.seek(to: CMTime(seconds: position, preferredTimescale: 600))
+        savePlayback(force: true)
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: item,
@@ -144,20 +149,75 @@ final class WorkAudioPlayer: ObservableObject {
 
     private func syncProgress() {
         let seconds = player.currentTime().seconds
-        if seconds.isFinite {
+        if seconds.isFinite, position != seconds {
             position = seconds
         }
         let itemDuration = player.currentItem?.duration.seconds
-        if let itemDuration, itemDuration.isFinite, itemDuration > 0 {
+        if let itemDuration, itemDuration.isFinite, itemDuration > 0, duration != itemDuration {
             duration = itemDuration
         }
-        isPlaying = player.timeControlStatus == .playing
+        let isCurrentlyPlaying = player.timeControlStatus == .playing
+        if isPlaying != isCurrentlyPlaying {
+            isPlaying = isCurrentlyPlaying
+        }
         updateSubtitle()
         updateNowPlaying()
+        savePlayback()
     }
 
     private func updateSubtitle() {
-        currentSubtitleIndex = subtitles.lastIndex { position >= $0.start && position < $0.end }
+        let index = subtitles.lastIndex { position >= $0.start && position < $0.end }
+        if currentSubtitleIndex != index {
+            currentSubtitleIndex = index
+        }
+    }
+
+    private func savePlayback(force: Bool = false) {
+        guard let workID, let currentTrack else { return }
+        guard force || abs(position - lastSavedPosition) >= 5 || lastSavedPosition < 0 else { return }
+        lastSavedPosition = position
+        let snapshot = PlaybackSnapshot(
+            workID: workID,
+            trackID: currentTrack.id,
+            position: position,
+            workTitle: workTitle,
+            circleName: circleName,
+            coverURL: coverURL?.absoluteString
+        )
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        UserDefaults.standard.set(data, forKey: PlaybackSnapshot.storageKey)
+    }
+
+    private func restorePlayback() async {
+        guard let data = UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey),
+              let snapshot = try? JSONDecoder().decode(PlaybackSnapshot.self, from: data),
+              let detail = try? await client.fetchWork(id: snapshot.workID),
+              let tracks = try? await client.fetchTracks(workID: snapshot.workID),
+              let context = Self.playbackContext(for: snapshot.trackID, in: tracks) else { return }
+
+        queue = context.queue
+        siblings = context.siblings
+        currentIndex = context.index
+        workID = detail.id
+        workTitle = detail.title
+        circleName = detail.name
+        coverURL = detail.mainCoverURL ?? snapshot.coverURL.flatMap(URL.init(string:))
+        loadCurrent(siblings: context.siblings, autoPlay: false, resumePosition: snapshot.position)
+    }
+
+    fileprivate static func playbackContext(for trackID: String, in nodes: [TrackNode]) -> (queue: [TrackNode], siblings: [TrackNode], index: Int)? {
+        let queue = nodes.filter { $0.isAudio && $0.audioURL != nil }
+        if let index = queue.firstIndex(where: { $0.id == trackID }) {
+            return (queue, nodes, index)
+        }
+
+        for node in nodes {
+            if let children = node.children,
+               let context = playbackContext(for: trackID, in: children) {
+                return context
+            }
+        }
+        return nil
     }
 
     private func configureAudioSession() {
@@ -384,6 +444,17 @@ final class WorkAudioPlayer: ObservableObject {
     }
 }
 
+private struct PlaybackSnapshot: Codable {
+    static let storageKey = "WorkAudioPlayer.playbackSnapshot"
+
+    let workID: Int
+    let trackID: String
+    let position: TimeInterval
+    let workTitle: String
+    let circleName: String
+    let coverURL: String?
+}
+
 struct SubtitleLine: Identifiable, Hashable {
     let id = UUID()
     let start: TimeInterval
@@ -425,6 +496,12 @@ enum AudioPlayerSelfCheck {
         let lines = WorkAudioPlayer.parseSubtitles(lrc)
         assert(lines.count == 2)
         assert(lines[0].end == 3)
+
+        let tracksJSON = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"a","duration":10,"mediaDownloadUrl":"https://example.com/a.mp3"},{"type":"audio","title":"02.mp3","hash":"b","duration":20,"mediaDownloadUrl":"https://example.com/b.mp3"}]}]"#
+        let tracks = (try? JSONDecoder().decode([TrackNode].self, from: Data(tracksJSON.utf8))) ?? []
+        let context = WorkAudioPlayer.playbackContext(for: "b", in: tracks)
+        assert(context?.queue.count == 2)
+        assert(context?.index == 1)
     }
 }
 #endif

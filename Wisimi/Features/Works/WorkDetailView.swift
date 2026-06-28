@@ -7,6 +7,7 @@ struct WorkDetailView: View {
     let workID: Int
     let client: ASMRClient
     let player: WorkAudioPlayer
+    let onTagSearch: (String) -> Void
 
     @State private var work: WorkDetail?
     @State private var tracks: [TrackNode] = []
@@ -24,7 +25,7 @@ struct WorkDetailView: View {
             } else if let work {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        DetailHero(work: work)
+                        DetailHero(work: work, onTagSearch: onTagSearch)
 
                         InfoCard {
                             TrackBrowserView(
@@ -240,6 +241,7 @@ private struct TrackDisplayItem: Identifiable {
 
 struct DetailHero: View {
     let work: WorkDetail
+    let onTagSearch: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -287,7 +289,12 @@ struct DetailHero: View {
                     CircleChip(text: work.name)
 
                     ForEach(work.tags) { tag in
-                        TagChip(text: tag.name)
+                        Button {
+                            onTagSearch(tag.name)
+                        } label: {
+                            TagChip(text: tag.name)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

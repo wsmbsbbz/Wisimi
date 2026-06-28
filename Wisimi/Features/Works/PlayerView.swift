@@ -178,6 +178,7 @@ private struct SubtitleListView: View {
                                         .foregroundStyle(index == player.currentSubtitleIndex ? .primary : .secondary)
                                         .multilineTextAlignment(.center)
                                         .frame(maxWidth: .infinity)
+                                        .padding(.horizontal, 14)
                                         .padding(.vertical, 8)
                                         .animation(.easeOut(duration: 0.25), value: player.currentSubtitleIndex)
                                 }

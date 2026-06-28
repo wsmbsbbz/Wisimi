@@ -130,7 +130,7 @@ struct WorksListView: View {
             .navigationDestination(for: WorksRoute.self) { route in
                 switch route {
                 case .detail(let workID):
-                    WorkDetailView(workID: workID, client: client, player: player)
+                    WorkDetailView(workID: workID, client: client, player: player, onTagSearch: searchTag)
                         .safeAreaInset(edge: .bottom) {
                             if player.currentTrack != nil {
                                 MiniPlayerBar(player: player) {
@@ -192,6 +192,14 @@ struct WorksListView: View {
     private func clearSearch() {
         searchText = ""
         activeSearchText = ""
+        Task { await reloadFromFirstPage() }
+    }
+
+    private func searchTag(_ tagName: String) {
+        searchText = "$tag:\(tagName)$"
+        activeSearchText = searchText
+        isSearchFocused = false
+        path = []
         Task { await reloadFromFirstPage() }
     }
 

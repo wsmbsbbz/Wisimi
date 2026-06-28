@@ -200,7 +200,7 @@ struct ChipFlowLayout: Layout {
 
         for subview in subviews {
             let size = boundedSize(for: subview, maxWidth: bounds.width)
-            if x > bounds.minX, x + spacing + size.width > bounds.maxX {
+            if x > bounds.minX, x + size.width > bounds.maxX {
                 x = bounds.minX
                 y += rowHeight + spacing
                 rowHeight = 0
