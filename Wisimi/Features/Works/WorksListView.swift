@@ -132,7 +132,14 @@ struct WorksListView: View {
             .navigationDestination(for: WorksRoute.self) { route in
                 switch route {
                 case .detail(let workID):
-                    WorkDetailView(workID: workID, client: client, player: player, onTagSearch: searchTag)
+                    WorkDetailView(
+                        workID: workID,
+                        client: client,
+                        auth: auth,
+                        player: player,
+                        onTagSearch: searchTag,
+                        onLoginRequired: { isLoginPresented = true }
+                    )
                         .safeAreaInset(edge: .bottom) {
                             if player.currentTrack != nil {
                                 MiniPlayerBar(player: player) {

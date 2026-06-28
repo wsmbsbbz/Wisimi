@@ -57,6 +57,7 @@ struct WorkDetail: Decodable {
     let rateAverage: Double?
     let hasSubtitle: Bool
     let mainCover: String?
+    let progress: ReviewStatus?
     let tags: [NameItem]
     let vas: [NameItem]
 
@@ -74,8 +75,24 @@ struct WorkDetail: Decodable {
         case rateAverage = "rate_average_2dp"
         case hasSubtitle = "has_subtitle"
         case mainCover = "mainCoverUrl"
+        case progress
         case tags
         case vas
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        name = try container.decode(String.self, forKey: .name)
+        duration = try container.decodeIfPresent(Double.self, forKey: .duration)
+        dlCount = try container.decode(Int.self, forKey: .dlCount)
+        rateAverage = try container.decodeIfPresent(Double.self, forKey: .rateAverage)
+        hasSubtitle = try container.decode(Bool.self, forKey: .hasSubtitle)
+        mainCover = try container.decodeIfPresent(String.self, forKey: .mainCover)
+        progress = try container.decodeIfPresent(String.self, forKey: .progress).flatMap(ReviewStatus.init(rawValue:))
+        tags = try container.decode([NameItem].self, forKey: .tags)
+        vas = try container.decode([NameItem].self, forKey: .vas)
     }
 }
 
@@ -140,13 +157,15 @@ enum DecodeSelfCheck {
     static func run() {
         let decoder = JSONDecoder()
         let list = #"{"works":[{"id":1,"title":"Work","name":"Circle","duration":90,"rate_average_2dp":4.8,"has_subtitle":true,"thumbnailCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}],"pagination":{"currentPage":1,"pageSize":20,"totalCount":42}}"#
-        let detail = #"{"id":1,"title":"Work","name":"Circle","duration":90,"dl_count":2,"rate_average_2dp":4.8,"has_subtitle":true,"mainCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}"#
+        let detail = #"{"id":1,"title":"Work","name":"Circle","duration":90,"dl_count":2,"rate_average_2dp":4.8,"has_subtitle":true,"mainCoverUrl":"https://example.com/a.jpg","progress":"marked","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}"#
         let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4,"mediaDownloadUrl":"https://example.com/01.mp3"},{"type":"text","title":"01.vtt","mediaDownloadUrl":"https://example.com/01.vtt"},{"type":"image","title":"cover.jpg"}]}]"#
 
         let worksResponse = try? decoder.decode(WorksResponse.self, from: Data(list.utf8))
         assert(worksResponse?.works.count == 1)
         assert(worksResponse?.pagination.totalPages == 3)
-        assert((try? decoder.decode(WorkDetail.self, from: Data(detail.utf8)))?.tags.first?.name == "耳かき")
+        let decodedDetail = try? decoder.decode(WorkDetail.self, from: Data(detail.utf8))
+        assert(decodedDetail?.tags.first?.name == "耳かき")
+        assert(decodedDetail?.progress == .marked)
         let decodedTracks = try? decoder.decode([TrackNode].self, from: Data(tracks.utf8))
         assert(decodedTracks?.audioTracks.count == 1)
         assert(decodedTracks?.defaultDirectoryPath.first?.children?.first?.isAudio == true)

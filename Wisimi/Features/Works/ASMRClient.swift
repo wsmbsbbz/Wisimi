@@ -50,6 +50,21 @@ struct ASMRClient {
         try await fetch(reviewURL(page: page, filter: filter), token: token)
     }
 
+    func markWork(id: Int, status: ReviewStatus = .marked, token: String) async throws {
+        try await sendJSON(
+            baseURL.appending(path: "review"),
+            method: "PUT",
+            body: MarkWorkRequest(workID: id, progress: status.rawValue),
+            token: token
+        )
+    }
+
+    func unmarkWork(id: Int, token: String) async throws {
+        var components = URLComponents(url: baseURL.appending(path: "review"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "work_id", value: String(id))]
+        try await send(components.url!, method: "DELETE", token: token)
+    }
+
     fileprivate func reviewURL(page: Int, filter: ReviewFilter) -> URL {
         var components = URLComponents(url: baseURL.appending(path: "review"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
@@ -69,8 +84,8 @@ struct ASMRClient {
         )
     }
 
-    func fetchWork(id: Int) async throws -> WorkDetail {
-        try await fetch(baseURL.appending(path: "work/\(id)"))
+    func fetchWork(id: Int, token: String? = nil) async throws -> WorkDetail {
+        try await fetch(baseURL.appending(path: "work/\(id)"), token: token)
     }
 
     func fetchTracks(workID: Int) async throws -> [TrackNode] {
@@ -114,11 +129,58 @@ struct ASMRClient {
         }
         return try decoder.decode(T.self, from: data)
     }
+
+    private func send(_ url: URL, method: String, token: String? = nil) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
+            throw ASMRClientError.badResponse
+        }
+    }
+
+    private func sendJSON<Body: Encodable>(_ url: URL, method: String, body: Body, token: String? = nil) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
+            throw ASMRClientError.badResponse
+        }
+    }
 }
 
 private struct LoginRequest: Encodable {
     let name: String
     let password: String
+}
+
+private struct MarkWorkRequest: Encodable {
+    let workID: Int
+    let progress: String
+
+    private enum CodingKeys: String, CodingKey {
+        case workID = "work_id"
+        case rating
+        case reviewText = "review_text"
+        case progress
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(workID, forKey: .workID)
+        try container.encodeNil(forKey: .rating)
+        try container.encodeNil(forKey: .reviewText)
+        try container.encode(progress, forKey: .progress)
+    }
 }
 
 struct WorksFilter: Equatable, Sendable {
@@ -294,6 +356,13 @@ enum ASMRClientURLSelfCheck {
         let nsfw = ReviewFilter(order: .nsfw, sort: .descending)
         assert(queryItems(in: client.reviewURL(page: 1, filter: nsfw))["order"] == "nsfw")
         assert(queryItems(in: client.reviewURL(page: 1, filter: nsfw))["sort"] == "desc")
+
+        let markData = try! JSONEncoder().encode(MarkWorkRequest(workID: 1542155, progress: "marked"))
+        let markJSON = try! JSONSerialization.jsonObject(with: markData) as! [String: Any]
+        assert(markJSON["work_id"] as? Int == 1542155)
+        assert(markJSON["progress"] as? String == "marked")
+        assert(markJSON["rating"] is NSNull)
+        assert(markJSON["review_text"] is NSNull)
     }
 
     private static func queryItems(in url: URL) -> [String: String] {

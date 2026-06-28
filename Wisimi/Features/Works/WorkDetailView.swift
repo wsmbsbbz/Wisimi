@@ -6,15 +6,20 @@ import UIKit
 struct WorkDetailView: View {
     let workID: Int
     let client: ASMRClient
+    @ObservedObject var auth: AuthSession
     let player: WorkAudioPlayer
     let onTagSearch: (String) -> Void
+    let onLoginRequired: () -> Void
 
     @State private var work: WorkDetail?
     @State private var tracks: [TrackNode] = []
     @State private var currentPath: [TrackNode] = []
     @State private var isPathMenuExpanded = false
     @State private var isLoading = false
+    @State private var isUpdatingMark = false
+    @State private var isMarkMenuPresented = false
     @State private var errorMessage: String?
+    @State private var markMessage: String?
 
     var body: some View {
         Group {
@@ -26,6 +31,16 @@ struct WorkDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         DetailHero(work: work, onTagSearch: onTagSearch)
+
+                        ReviewActionButton(
+                            isMarked: work.progress != nil,
+                            currentStatus: work.progress,
+                            isLoading: isUpdatingMark,
+                            isMenuPresented: $isMarkMenuPresented,
+                            message: markMessage,
+                            action: toggleMark,
+                            onStatusSelected: mark
+                        )
 
                         InfoCard {
                             TrackBrowserView(
@@ -48,6 +63,9 @@ struct WorkDetailView: View {
         .task {
             await loadDetail()
         }
+        .onChange(of: auth.token) {
+            Task { await loadDetail() }
+        }
     }
 
     private func loadDetail() async {
@@ -55,7 +73,7 @@ struct WorkDetailView: View {
         isLoading = true
         errorMessage = nil
         do {
-            async let detail = client.fetchWork(id: workID)
+            async let detail = client.fetchWork(id: workID, token: auth.token)
             async let trackList = client.fetchTracks(workID: workID)
             work = try await detail
             tracks = try await trackList
@@ -65,6 +83,47 @@ struct WorkDetailView: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func toggleMark() {
+        guard let work else { return }
+        guard let token = auth.token else {
+            onLoginRequired()
+            return
+        }
+
+        guard work.progress != nil else {
+            isMarkMenuPresented.toggle()
+            return
+        }
+
+        Task {
+            isUpdatingMark = true
+            markMessage = nil
+            do {
+                try await client.unmarkWork(id: work.id, token: token)
+                self.work = try await client.fetchWork(id: work.id, token: token)
+            } catch {
+                markMessage = error.localizedDescription
+            }
+            isUpdatingMark = false
+        }
+    }
+
+    private func mark(_ status: ReviewStatus) {
+        guard let work, let token = auth.token else { return }
+
+        Task {
+            isUpdatingMark = true
+            markMessage = nil
+            do {
+                try await client.markWork(id: work.id, status: status, token: token)
+                self.work = try await client.fetchWork(id: work.id, token: token)
+            } catch {
+                markMessage = error.localizedDescription
+            }
+            isUpdatingMark = false
+        }
     }
 }
 
@@ -225,6 +284,84 @@ private struct TrackBrowserNode: View {
         } else {
             TrackNodeRow(track: item.node)
         }
+    }
+
+}
+
+private struct ReviewActionButton: View {
+    let isMarked: Bool
+    let currentStatus: ReviewStatus?
+    let isLoading: Bool
+    @Binding var isMenuPresented: Bool
+    let message: String?
+    let action: () -> Void
+    let onStatusSelected: (ReviewStatus) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            markButton
+
+            if let message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var markButton: some View {
+        Button(action: action) {
+            HStack {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: isMarked ? "bookmark.slash" : "bookmark")
+                }
+
+                Text(isMarked ? "删除标记" : "标记")
+                    .font(.subheadline.weight(.semibold))
+
+                if let currentStatus {
+                    Text(currentStatus.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(isMarked ? .red : .accentColor)
+        .disabled(isLoading)
+        .popover(isPresented: $isMenuPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            markMenu
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var markMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(ReviewStatus.allCases) { status in
+                Button {
+                    isMenuPresented = false
+                    onStatusSelected(status)
+                } label: {
+                    HStack {
+                        Text(status.title)
+                            .font(.callout.weight(.medium))
+                        Spacer()
+                    }
+                    .frame(minWidth: 120, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 6)
     }
 }
 
