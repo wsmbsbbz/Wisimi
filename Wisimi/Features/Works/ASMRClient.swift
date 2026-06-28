@@ -46,14 +46,19 @@ struct ASMRClient {
         )
     }
 
-    func fetchFavorites(page: Int = 1, token: String) async throws -> WorksResponse {
+    func fetchFavorites(page: Int = 1, token: String, filter: ReviewFilter = .default) async throws -> WorksResponse {
+        try await fetch(reviewURL(page: page, filter: filter), token: token)
+    }
+
+    fileprivate func reviewURL(page: Int, filter: ReviewFilter) -> URL {
         var components = URLComponents(url: baseURL.appending(path: "review"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "page", value: String(page)),
-            URLQueryItem(name: "order", value: "updated_at"),
-            URLQueryItem(name: "sort", value: "desc")
+            URLQueryItem(name: "filter", value: filter.status.rawValue),
+            URLQueryItem(name: "order", value: filter.order.rawValue),
+            URLQueryItem(name: "sort", value: filter.sort.rawValue)
         ]
-        return try await fetch(components.url!, token: token)
+        return components.url!
     }
 
     func fetchRecommended(page: Int = 1, uuid: String, token: String, filter: WorksFilter = .default) async throws -> WorksResponse {
@@ -168,6 +173,77 @@ enum WorksSort: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+struct ReviewFilter: Equatable, Sendable {
+    var status: ReviewStatus = .marked
+    var order: ReviewOrder = .updatedAt
+    var sort: ReviewSort = .descending
+
+    nonisolated static let `default` = ReviewFilter()
+}
+
+enum ReviewStatus: String, CaseIterable, Identifiable, Sendable {
+    case marked
+    case listening
+    case listened
+    case replay
+    case postponed
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .marked: "想听"
+        case .listening: "在听"
+        case .listened: "听过"
+        case .replay: "重听"
+        case .postponed: "搁置"
+        }
+    }
+}
+
+enum ReviewOrder: String, CaseIterable, Identifiable, Sendable {
+    case updatedAt = "updated_at"
+    case userRating
+    case release
+    case reviewCount = "review_count"
+    case dlCount = "dl_count"
+    case nsfw
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .updatedAt: "标记时间"
+        case .userRating: "评价"
+        case .release: "发布时间"
+        case .reviewCount: "评论数量"
+        case .dlCount: "售出数量"
+        case .nsfw: "新作分级"
+        }
+    }
+}
+
+enum ReviewSort: String, CaseIterable, Identifiable, Sendable {
+    case descending = "desc"
+    case ascending = "asc"
+
+    var id: String { rawValue }
+
+    func title(for order: ReviewOrder) -> String {
+        guard order == .nsfw else {
+            return switch self {
+            case .descending: "降序"
+            case .ascending: "升序"
+            }
+        }
+
+        return switch self {
+        case .descending: "18禁新作"
+        case .ascending: "全年龄新作"
+        }
+    }
+}
+
 private struct PopularRequest: Encodable {
     let keyword = " "
     let page: Int
@@ -198,3 +274,32 @@ enum ASMRClientError: LocalizedError {
         }
     }
 }
+
+#if DEBUG
+enum ASMRClientURLSelfCheck {
+    static func run() {
+        let client = ASMRClient()
+        assert(queryItems(in: client.reviewURL(page: 1, filter: .default)) == [
+            "page": "1",
+            "filter": "marked",
+            "order": "updated_at",
+            "sort": "desc"
+        ])
+
+        let listenedRating = ReviewFilter(status: .listened, order: .userRating, sort: .ascending)
+        assert(queryItems(in: client.reviewURL(page: 3, filter: listenedRating))["filter"] == "listened")
+        assert(queryItems(in: client.reviewURL(page: 3, filter: listenedRating))["order"] == "userRating")
+        assert(queryItems(in: client.reviewURL(page: 3, filter: listenedRating))["sort"] == "asc")
+
+        let nsfw = ReviewFilter(order: .nsfw, sort: .descending)
+        assert(queryItems(in: client.reviewURL(page: 1, filter: nsfw))["order"] == "nsfw")
+        assert(queryItems(in: client.reviewURL(page: 1, filter: nsfw))["sort"] == "desc")
+    }
+
+    private static func queryItems(in url: URL) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.map {
+            ($0.name, $0.value ?? "")
+        })
+    }
+}
+#endif

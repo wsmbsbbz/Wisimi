@@ -6,6 +6,7 @@ struct WisimiApp: App {
         #if DEBUG
         DecodeSelfCheck.run()
         AuthSelfCheck.run()
+        ASMRClientURLSelfCheck.run()
         AudioPlayerSelfCheck.run()
         #endif
     }

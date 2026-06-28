@@ -14,6 +14,7 @@ struct WorksListView: View {
     @State private var searchText = ""
     @State private var activeSearchText = ""
     @State private var filter = WorksFilter.default
+    @State private var reviewFilter = ReviewFilter.default
     @State private var isFilterPresented = false
     @State private var isLoginPresented = false
     @State private var pendingMode: WorksMode?
@@ -40,6 +41,7 @@ struct WorksListView: View {
                             activeSearchText: activeSearchText,
                             selectedMode: selectedMode,
                             filter: filter,
+                            reviewFilter: reviewFilter,
                             isSearchFocused: $isSearchFocused,
                             onSearch: runSearch,
                             onClearSearch: clearSearch,
@@ -143,8 +145,11 @@ struct WorksListView: View {
                 }
             }
             .sheet(isPresented: $isFilterPresented) {
-                WorksFilterSheet(filter: filter) { newFilter in
+                WorksFilterSheet(mode: selectedMode, filter: filter, reviewFilter: reviewFilter) { newFilter in
                     filter = newFilter
+                    Task { await reloadFromFirstPage() }
+                } onApplyReviewFilter: { newFilter in
+                    reviewFilter = newFilter
                     Task { await reloadFromFirstPage() }
                 }
                 .presentationDetents([.medium, .large])
@@ -241,7 +246,7 @@ struct WorksListView: View {
                     response = try await client.fetchPopular(page: page, filter: filter)
                 case .favorites:
                     guard let token = auth.token else { throw ASMRClientError.loginRequired }
-                    response = try await client.fetchFavorites(page: page, token: token)
+                    response = try await client.fetchFavorites(page: page, token: token, filter: reviewFilter)
                 case .recommended:
                     guard let token = auth.token else { throw ASMRClientError.loginRequired }
                     guard let uuid = auth.recommenderUuid, !uuid.isEmpty else { throw ASMRClientError.missingRecommenderUuid }
@@ -358,6 +363,7 @@ private struct WorksSearchHeader: View {
     let activeSearchText: String
     let selectedMode: WorksMode
     let filter: WorksFilter
+    let reviewFilter: ReviewFilter
     var isSearchFocused: FocusState<Bool>.Binding
     let onSearch: () -> Void
     let onClearSearch: () -> Void
@@ -419,20 +425,8 @@ private struct WorksSearchHeader: View {
                 .padding(.vertical, 1)
             }
 
-            if !activeSearchText.isEmpty || filter != .default {
-                HStack(spacing: 8) {
-                    if !activeSearchText.isEmpty {
-                        Text("搜索：\(activeSearchText)")
-                    }
-                    if filter.hasSubtitle {
-                        Text("有字幕")
-                    }
-                    if activeSearchText.isEmpty && selectedMode == .popular {
-                        Text("热门作品")
-                    } else {
-                        Text("\(filter.order.title) \(filter.sort.title)")
-                    }
-                }
+            if let summaryText {
+                Text(summaryText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -441,50 +435,120 @@ private struct WorksSearchHeader: View {
         .padding(10)
         .background(.regularMaterial, in: .rect(cornerRadius: 8))
     }
+
+    private var summaryText: String? {
+        if !activeSearchText.isEmpty {
+            var parts = ["搜索：\(activeSearchText)"]
+            if filter.hasSubtitle {
+                parts.append("有字幕")
+            }
+            parts.append("\(filter.order.title) \(filter.sort.title)")
+            return parts.joined(separator: " · ")
+        }
+
+        if selectedMode == .favorites {
+            return "\(reviewFilter.status.title) · \(reviewFilter.order.title) · \(reviewFilter.sort.title(for: reviewFilter.order))"
+        }
+
+        guard filter != .default else { return nil }
+        var parts: [String] = []
+        if filter.hasSubtitle {
+            parts.append("有字幕")
+        }
+        parts.append(selectedMode == .popular ? "热门作品" : "\(filter.order.title) \(filter.sort.title)")
+        return parts.joined(separator: " · ")
+    }
 }
 
 private struct WorksFilterSheet: View {
     @Environment(\.dismiss) private var dismiss
+    let mode: WorksMode
     @State private var draft: WorksFilter
+    @State private var reviewDraft: ReviewFilter
     let onApply: (WorksFilter) -> Void
+    let onApplyReviewFilter: (ReviewFilter) -> Void
 
-    init(filter: WorksFilter, onApply: @escaping (WorksFilter) -> Void) {
+    init(
+        mode: WorksMode,
+        filter: WorksFilter,
+        reviewFilter: ReviewFilter,
+        onApply: @escaping (WorksFilter) -> Void,
+        onApplyReviewFilter: @escaping (ReviewFilter) -> Void
+    ) {
+        self.mode = mode
         _draft = State(initialValue: filter)
+        _reviewDraft = State(initialValue: reviewFilter)
         self.onApply = onApply
+        self.onApplyReviewFilter = onApplyReviewFilter
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Toggle("有字幕", isOn: $draft.hasSubtitle)
-                }
-
-                Section("排序") {
-                    Picker("字段", selection: $draft.order) {
-                        ForEach(WorksOrder.allCases) { order in
-                            Text(order.title).tag(order)
+                if mode == .favorites {
+                    Section("状态") {
+                        Picker("", selection: $reviewDraft.status) {
+                            ForEach(ReviewStatus.allCases) { status in
+                                Text(status.title).tag(status)
+                            }
                         }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
                     }
 
-                    Picker("方向", selection: $draft.sort) {
-                        ForEach(WorksSort.allCases) { sort in
-                            Text(sort.title).tag(sort)
+                    Section("排序") {
+                        Picker("字段", selection: $reviewDraft.order) {
+                            ForEach(ReviewOrder.allCases) { order in
+                                Text(order.title).tag(order)
+                            }
                         }
+
+                        Picker("方向", selection: $reviewDraft.sort) {
+                            ForEach(ReviewSort.allCases) { sort in
+                                Text(sort.title(for: reviewDraft.order)).tag(sort)
+                            }
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
+                } else {
+                    Section {
+                        Toggle("有字幕", isOn: $draft.hasSubtitle)
+                    }
+
+                    Section("排序") {
+                        Picker("字段", selection: $draft.order) {
+                            ForEach(WorksOrder.allCases) { order in
+                                Text(order.title).tag(order)
+                            }
+                        }
+
+                        Picker("方向", selection: $draft.sort) {
+                            ForEach(WorksSort.allCases) { sort in
+                                Text(sort.title).tag(sort)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
                 }
             }
             .navigationTitle("筛选")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("重置") {
-                        draft = .default
+                        if mode == .favorites {
+                            reviewDraft = .default
+                        } else {
+                            draft = .default
+                        }
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("应用") {
-                        onApply(draft)
+                        if mode == .favorites {
+                            onApplyReviewFilter(reviewDraft)
+                        } else {
+                            onApply(draft)
+                        }
                         dismiss()
                     }
                 }
