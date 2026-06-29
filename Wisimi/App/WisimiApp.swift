@@ -8,6 +8,8 @@ struct WisimiApp: App {
         AuthSelfCheck.run()
         ASMRClientURLSelfCheck.run()
         AudioPlayerSelfCheck.run()
+        TTSMixSettingsSelfCheck.run()
+        EdgeOnlineTTSSelfCheck.run()
         #endif
     }
 

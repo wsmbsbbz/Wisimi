@@ -172,15 +172,19 @@ private struct SubtitleListView: View {
                                 Button {
                                     player.seek(to: subtitle)
                                 } label: {
-                                    Text(subtitle.text)
-                                        .font(.subheadline)
-                                        .fontWeight(index == player.currentSubtitleIndex ? .semibold : .regular)
-                                        .foregroundStyle(index == player.currentSubtitleIndex ? .primary : .secondary)
-                                        .multilineTextAlignment(.center)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 8)
-                                        .animation(.easeOut(duration: 0.25), value: player.currentSubtitleIndex)
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        NarrationStatusIcon(status: player.narrationStatuses[subtitle.id])
+
+                                        Text(subtitle.text)
+                                            .font(.subheadline)
+                                            .fontWeight(index == player.currentSubtitleIndex ? .semibold : .regular)
+                                            .foregroundStyle(index == player.currentSubtitleIndex ? .primary : .secondary)
+                                            .multilineTextAlignment(.center)
+                                            .frame(maxWidth: .infinity)
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .animation(.easeOut(duration: 0.25), value: player.currentSubtitleIndex)
                                 }
                                 .buttonStyle(.plain)
                                 .id(index)
@@ -208,6 +212,41 @@ private struct SubtitleListView: View {
                     proxy.scrollTo(index, anchor: .center)
                 }
             }
+        }
+    }
+}
+
+private struct NarrationStatusIcon: View {
+    let status: TTSGenerationStatus?
+
+    var body: some View {
+        Group {
+            if let status {
+                Image(systemName: "circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(color(for: status))
+                    .accessibilityLabel(label(for: status))
+            } else {
+                Color.clear
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(width: 12)
+    }
+
+    private func color(for status: TTSGenerationStatus) -> Color {
+        switch status {
+        case .generating: .blue
+        case .ready: .green
+        case .failed: .red
+        }
+    }
+
+    private func label(for status: TTSGenerationStatus) -> String {
+        switch status {
+        case .generating: "TTS 正在生成"
+        case .ready: "TTS 已生成"
+        case .failed: "TTS 生成失败"
         }
     }
 }

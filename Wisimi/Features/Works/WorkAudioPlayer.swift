@@ -19,32 +19,65 @@ final class WorkAudioPlayer: ObservableObject {
     @Published var isPlaying = false
     @Published var subtitles: [SubtitleLine] = []
     @Published var currentSubtitleIndex: Int?
+    @Published private(set) var narrationStatuses: [SubtitleLine.ID: TTSGenerationStatus] = [:]
 
     private let client: ASMRClient
+    private let ttsSettings: TTSMixSettings
+    private let ttsClient = EdgeOnlineTTSClient()
     private let player = AVPlayer()
+    private let narrationPlayer = AVPlayer()
     private var siblings: [TrackNode] = []
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
     private var playerStatusCancellable: AnyCancellable?
+    private var settingsCancellables: Set<AnyCancellable> = []
     private var loadTask: Task<Void, Never>?
+    private var narrationTask: Task<Void, Never>?
+    private var narrationCutoffTask: Task<Void, Never>?
+    private var prefetchTasks: [SubtitleLine.ID: Task<Void, Never>] = [:]
     private var artworkTask: Task<Void, Never>?
     private var nowPlayingArtworkURL: URL?
     private var wasPlayingBeforeInterruption = false
     private var isActivatingAudioSession = false
     private var shouldPlayAfterActivation = false
     private var lastSavedPosition: TimeInterval = -1
+    private var lastNarrationID: String?
 
-    init(client: ASMRClient) {
+    init(client: ASMRClient, ttsSettings: TTSMixSettings) {
         self.client = client
+        self.ttsSettings = ttsSettings
         configureAudioSession()
         configureRemoteCommands()
         observeAudioSession()
+        narrationPlayer.volume = Float(ttsSettings.volume)
         playerStatusCancellable = player.publisher(for: \.timeControlStatus)
             .sink { [weak self] _ in
                 Task { @MainActor in self?.syncProgress() }
             }
+        ttsSettings.$volume
+            .sink { [weak self] volume in
+                self?.narrationPlayer.volume = Float(volume)
+            }
+            .store(in: &settingsCancellables)
+        ttsSettings.$isEnabled
+            .sink { [weak self] isEnabled in
+                guard !isEnabled else { return }
+                self?.stopNarration(clearLast: true)
+                self?.cancelPrefetchTasks()
+                self?.narrationStatuses = [:]
+            }
+            .store(in: &settingsCancellables)
+        ttsSettings.$maxSpeechRate
+            .sink { [weak self] _ in
+                guard let self else { return }
+                stopNarration(clearLast: true)
+                cancelPrefetchTasks()
+                refreshCachedNarrationStatuses()
+                syncNarration()
+            }
+            .store(in: &settingsCancellables)
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
             Task { @MainActor in self?.syncProgress() }
         }
@@ -100,6 +133,8 @@ final class WorkAudioPlayer: ObservableObject {
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
         position = target
         updateSubtitle()
+        stopNarration(clearLast: true)
+        syncNarration()
         updateNowPlaying()
         savePlayback(force: true)
     }
@@ -115,6 +150,9 @@ final class WorkAudioPlayer: ObservableObject {
         endObserver.map(NotificationCenter.default.removeObserver)
         let item = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: item)
+        stopNarration(clearLast: true)
+        cancelPrefetchTasks()
+        narrationStatuses = [:]
         position = max(0, min(resumePosition, track.duration ?? resumePosition))
         duration = track.duration ?? 0
         subtitles = []
@@ -136,7 +174,9 @@ final class WorkAudioPlayer: ObservableObject {
             await MainActor.run {
                 guard self.currentTrack?.id == track.id else { return }
                 self.subtitles = lines
+                self.refreshCachedNarrationStatuses()
                 self.updateSubtitle()
+                self.syncNarration()
             }
         }
 
@@ -161,15 +201,21 @@ final class WorkAudioPlayer: ObservableObject {
             isPlaying = isCurrentlyPlaying
         }
         updateSubtitle()
+        syncNarration()
+        prefetchUpcomingNarration()
         updateNowPlaying()
         savePlayback()
     }
 
     private func updateSubtitle() {
-        let index = subtitles.lastIndex { position >= $0.start && position < $0.end }
+        let index = Self.currentSubtitleIndex(at: position, in: subtitles)
         if currentSubtitleIndex != index {
             currentSubtitleIndex = index
         }
+    }
+
+    fileprivate static func currentSubtitleIndex(at position: TimeInterval, in subtitles: [SubtitleLine]) -> Int? {
+        subtitles.lastIndex { position >= $0.start }
     }
 
     private func savePlayback(force: Bool = false) {
@@ -239,7 +285,168 @@ final class WorkAudioPlayer: ObservableObject {
     private func pauseCurrent() {
         shouldPlayAfterActivation = false
         player.pause()
+        stopNarration(clearLast: true)
         syncProgress()
+    }
+
+    private func syncNarration() {
+        guard ttsSettings.isEnabled, isPlaying, let currentTrack else {
+            stopNarration(clearLast: false)
+            return
+        }
+        guard let currentSubtitleIndex, subtitles.indices.contains(currentSubtitleIndex) else {
+            stopNarration(clearLast: true)
+            return
+        }
+
+        let subtitle = subtitles[currentSubtitleIndex]
+        let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let narrationID = "\(currentTrack.id)|\(subtitle.start)|\(text)"
+        guard lastNarrationID != narrationID else { return }
+        lastNarrationID = narrationID
+        stopNarration(clearLast: false)
+        prefetchTasks[subtitle.id]?.cancel()
+        prefetchTasks[subtitle.id] = nil
+
+        let speechRate = ttsSettings.maxSpeechRate
+        let outputURL = EdgeOnlineTTSClient.cacheURL(for: text, speechRate: speechRate)
+        let cutoff = narrationCutoff(forSubtitleAt: currentSubtitleIndex)
+        narrationStatuses[subtitle.id] = FileManager.default.fileExists(atPath: outputURL.path) ? .ready : .generating
+        narrationTask = Task { [ttsClient] in
+            do {
+                try await ttsClient.synthesizeToFile(text: text, speechRate: speechRate, outputURL: outputURL)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.narrationStatuses[subtitle.id] = .ready
+                    guard self.ttsSettings.isEnabled,
+                          self.isPlaying,
+                          self.currentNarrationID() == narrationID else { return }
+                    let item = AVPlayerItem(url: outputURL)
+                    self.narrationPlayer.replaceCurrentItem(with: item)
+                    self.narrationPlayer.volume = Float(self.ttsSettings.volume)
+                    self.narrationPlayer.play()
+                    self.scheduleNarrationCutoff(at: cutoff, narrationID: narrationID)
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.narrationStatuses[subtitle.id] = .failed
+                    guard self.currentNarrationID() == narrationID else { return }
+                    self.lastNarrationID = nil
+                }
+            }
+        }
+    }
+
+    private func stopNarration(clearLast: Bool) {
+        narrationTask?.cancel()
+        narrationTask = nil
+        narrationCutoffTask?.cancel()
+        narrationCutoffTask = nil
+        narrationPlayer.pause()
+        narrationPlayer.replaceCurrentItem(with: nil)
+        if clearLast {
+            lastNarrationID = nil
+        }
+    }
+
+    private func prefetchUpcomingNarration() {
+        guard ttsSettings.isEnabled, let currentSubtitleIndex else { return }
+        let indices = Self.prefetchIndices(after: currentSubtitleIndex, subtitleCount: subtitles.count)
+        for index in indices {
+            prefetchNarration(at: index)
+        }
+    }
+
+    private func prefetchNarration(at index: Int) {
+        guard subtitles.indices.contains(index) else { return }
+        let subtitle = subtitles[index]
+        let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let speechRate = ttsSettings.maxSpeechRate
+        let outputURL = EdgeOnlineTTSClient.cacheURL(for: text, speechRate: speechRate)
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            narrationStatuses[subtitle.id] = .ready
+            return
+        }
+        guard prefetchTasks[subtitle.id] == nil else { return }
+
+        narrationStatuses[subtitle.id] = .generating
+        prefetchTasks[subtitle.id] = Task { [ttsClient] in
+            do {
+                try await ttsClient.synthesizeToFile(text: text, speechRate: speechRate, outputURL: outputURL)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.prefetchTasks[subtitle.id] = nil
+                    self.narrationStatuses[subtitle.id] = .ready
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.prefetchTasks[subtitle.id] = nil
+                    self.narrationStatuses[subtitle.id] = .failed
+                }
+            }
+        }
+    }
+
+    private func cancelPrefetchTasks() {
+        for task in prefetchTasks.values {
+            task.cancel()
+        }
+        prefetchTasks = [:]
+    }
+
+    private func refreshCachedNarrationStatuses() {
+        let speechRate = ttsSettings.maxSpeechRate
+        narrationStatuses = Dictionary(uniqueKeysWithValues: subtitles.compactMap { subtitle in
+            let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            let url = EdgeOnlineTTSClient.cacheURL(for: text, speechRate: speechRate)
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return (subtitle.id, TTSGenerationStatus.ready)
+        })
+    }
+
+    fileprivate static func prefetchIndices(after index: Int, subtitleCount: Int) -> [Int] {
+        guard subtitleCount > 0 else { return [] }
+        let start = index + 1
+        guard start < subtitleCount else { return [] }
+        let end = min(index + 5, subtitleCount - 1)
+        return Array(start...end)
+    }
+
+    private func scheduleNarrationCutoff(at cutoff: TimeInterval, narrationID: String) {
+        narrationCutoffTask?.cancel()
+        let delay = max(0, cutoff - position)
+        narrationCutoffTask = Task {
+            try? await Task.sleep(for: .seconds(delay))
+            await MainActor.run {
+                guard self.currentNarrationID() == narrationID else { return }
+                self.stopNarration(clearLast: false)
+            }
+        }
+    }
+
+    private func narrationCutoff(forSubtitleAt index: Int) -> TimeInterval {
+        let nextIndex = subtitles.index(after: index)
+        if subtitles.indices.contains(nextIndex) {
+            return subtitles[nextIndex].start
+        }
+        return duration > 0 ? duration : subtitles[index].end
+    }
+
+    private func currentNarrationID() -> String? {
+        guard let currentTrack,
+              let currentSubtitleIndex,
+              subtitles.indices.contains(currentSubtitleIndex) else { return nil }
+        let subtitle = subtitles[currentSubtitleIndex]
+        let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return "\(currentTrack.id)|\(subtitle.start)|\(text)"
     }
 
     private func activateAudioSession(then action: @escaping @MainActor (Bool) -> Void) {
@@ -455,6 +662,12 @@ private struct PlaybackSnapshot: Codable {
     let coverURL: String?
 }
 
+enum TTSGenerationStatus {
+    case generating
+    case ready
+    case failed
+}
+
 struct SubtitleLine: Identifiable, Hashable {
     let id = UUID()
     let start: TimeInterval
@@ -489,13 +702,21 @@ enum AudioPlayerSelfCheck {
 
         00:00:01.000 --> 00:00:02.500
         hello
+
+        00:00:04.000 --> 00:00:05.000
+        next
         """
         let lrc = "[00:01.50]hello\n[00:03.00]next"
 
         assert(WorkAudioPlayer.parseSubtitles(vtt).first?.start == 1)
+        assert(WorkAudioPlayer.currentSubtitleIndex(at: 3.5, in: WorkAudioPlayer.parseSubtitles(vtt)) == 0)
         let lines = WorkAudioPlayer.parseSubtitles(lrc)
         assert(lines.count == 2)
         assert(lines[0].end == 3)
+        assert(WorkAudioPlayer.currentSubtitleIndex(at: 2.9, in: lines) == 0)
+        assert(WorkAudioPlayer.prefetchIndices(after: 0, subtitleCount: 10) == [1, 2, 3, 4, 5])
+        assert(WorkAudioPlayer.prefetchIndices(after: 8, subtitleCount: 10) == [9])
+        assert(WorkAudioPlayer.prefetchIndices(after: 9, subtitleCount: 10).isEmpty)
 
         let tracksJSON = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"a","duration":10,"mediaDownloadUrl":"https://example.com/a.mp3"},{"type":"audio","title":"02.mp3","hash":"b","duration":20,"mediaDownloadUrl":"https://example.com/b.mp3"}]}]"#
         let tracks = (try? JSONDecoder().decode([TrackNode].self, from: Data(tracksJSON.utf8))) ?? []
