@@ -50,6 +50,34 @@ struct ASMRClient {
         try await fetch(reviewURL(page: page, filter: filter), token: token)
     }
 
+    func fetchPlaylists(page: Int = 1, pageSize: Int = 20, token: String) async throws -> PlaylistsResponse {
+        try await fetch(playlistsURL(page: page, pageSize: pageSize), token: token)
+    }
+
+    func fetchPlaylistWorks(id: String, page: Int = 1, pageSize: Int = 12, token: String) async throws -> WorksResponse {
+        try await fetch(playlistWorksURL(id: id, page: page, pageSize: pageSize), token: token)
+    }
+
+    func fetchPlaylistStatus(workID: Int, page: Int = 1, pageSize: Int = 12, token: String) async throws -> PlaylistsResponse {
+        try await fetch(playlistStatusURL(workID: workID, page: page, pageSize: pageSize), token: token)
+    }
+
+    func addWorkToPlaylist(playlistID: String, workID: Int, token: String) async throws {
+        let _: PlaylistMutationResponse = try await postJSON(
+            baseURL.appending(path: "playlist/add-works-to-playlist"),
+            body: PlaylistWorksRequest(id: playlistID, works: [workID]),
+            token: token
+        )
+    }
+
+    func removeWorkFromPlaylist(playlistID: String, workID: Int, token: String) async throws {
+        let _: PlaylistMutationResponse = try await postJSON(
+            baseURL.appending(path: "playlist/remove-works-from-playlist"),
+            body: PlaylistWorksRequest(id: playlistID, works: [workID]),
+            token: token
+        )
+    }
+
     func markWork(id: Int, status: ReviewStatus = .marked, token: String) async throws {
         try await sendJSON(
             baseURL.appending(path: "review"),
@@ -72,6 +100,37 @@ struct ASMRClient {
             URLQueryItem(name: "filter", value: filter.status.rawValue),
             URLQueryItem(name: "order", value: filter.order.rawValue),
             URLQueryItem(name: "sort", value: filter.sort.rawValue)
+        ]
+        return components.url!
+    }
+
+    fileprivate func playlistsURL(page: Int, pageSize: Int) -> URL {
+        var components = URLComponents(url: baseURL.appending(path: "playlist/get-playlists"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "pageSize", value: String(pageSize)),
+            URLQueryItem(name: "filterBy", value: "all")
+        ]
+        return components.url!
+    }
+
+    fileprivate func playlistWorksURL(id: String, page: Int, pageSize: Int) -> URL {
+        var components = URLComponents(url: baseURL.appending(path: "playlist/get-playlist-works"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "id", value: id),
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "pageSize", value: String(pageSize))
+        ]
+        return components.url!
+    }
+
+    fileprivate func playlistStatusURL(workID: Int, page: Int, pageSize: Int) -> URL {
+        var components = URLComponents(url: baseURL.appending(path: "playlist/get-work-exist-status-in-my-playlists"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "workID", value: String(workID)),
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "pageSize", value: String(pageSize)),
+            URLQueryItem(name: "version", value: "2")
         ]
         return components.url!
     }
@@ -181,6 +240,16 @@ private struct MarkWorkRequest: Encodable {
         try container.encodeNil(forKey: .reviewText)
         try container.encode(progress, forKey: .progress)
     }
+}
+
+private struct PlaylistWorksRequest: Encodable {
+    let id: String
+    let works: [Int]
+}
+
+private struct PlaylistMutationResponse: Decodable {
+    let id: String
+    let rowCount: Int
 }
 
 struct WorksFilter: Equatable, Sendable {
@@ -327,12 +396,14 @@ enum ASMRClientError: LocalizedError {
     case badResponse
     case loginRequired
     case missingRecommenderUuid
+    case noPlaylists
 
     var errorDescription: String? {
         switch self {
         case .badResponse: "接口返回异常"
         case .loginRequired: "请先登录"
         case .missingRecommenderUuid: "当前账号缺少推荐标识"
+        case .noPlaylists: "暂无播放列表"
         }
     }
 }
@@ -346,6 +417,22 @@ enum ASMRClientURLSelfCheck {
             "filter": "marked",
             "order": "updated_at",
             "sort": "desc"
+        ])
+        assert(queryItems(in: client.playlistsURL(page: 1, pageSize: 20)) == [
+            "page": "1",
+            "pageSize": "20",
+            "filterBy": "all"
+        ])
+        assert(queryItems(in: client.playlistWorksURL(id: "playlist-id", page: 2, pageSize: 12)) == [
+            "id": "playlist-id",
+            "page": "2",
+            "pageSize": "12"
+        ])
+        assert(queryItems(in: client.playlistStatusURL(workID: 1172778, page: 1, pageSize: 12)) == [
+            "workID": "1172778",
+            "page": "1",
+            "pageSize": "12",
+            "version": "2"
         ])
 
         let listenedRating = ReviewFilter(status: .listened, order: .userRating, sort: .ascending)
@@ -363,6 +450,11 @@ enum ASMRClientURLSelfCheck {
         assert(markJSON["progress"] as? String == "marked")
         assert(markJSON["rating"] is NSNull)
         assert(markJSON["review_text"] is NSNull)
+
+        let playlistData = try! JSONEncoder().encode(PlaylistWorksRequest(id: "playlist-id", works: [1172778]))
+        let playlistJSON = try! JSONSerialization.jsonObject(with: playlistData) as! [String: Any]
+        assert(playlistJSON["id"] as? String == "playlist-id")
+        assert(playlistJSON["works"] as? [Int] == [1172778])
     }
 
     private static func queryItems(in url: URL) -> [String: String] {

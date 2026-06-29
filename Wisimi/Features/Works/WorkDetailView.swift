@@ -18,6 +18,7 @@ struct WorkDetailView: View {
     @State private var isLoading = false
     @State private var isUpdatingMark = false
     @State private var isMarkMenuPresented = false
+    @State private var isPlaylistMenuPresented = false
     @State private var errorMessage: String?
     @State private var markMessage: String?
 
@@ -32,15 +33,17 @@ struct WorkDetailView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         DetailHero(work: work, onTagSearch: onTagSearch)
 
-                        ReviewActionButton(
-                            isMarked: work.progress != nil,
-                            currentStatus: work.progress,
-                            isLoading: isUpdatingMark,
-                            isMenuPresented: $isMarkMenuPresented,
-                            message: markMessage,
-                            action: toggleMark,
-                            onStatusSelected: mark
-                        )
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .top, spacing: 10) {
+                                reviewAction(for: work)
+                                playlistAction(for: work)
+                            }
+
+                            VStack(alignment: .leading, spacing: 10) {
+                                reviewAction(for: work)
+                                playlistAction(for: work)
+                            }
+                        }
 
                         InfoCard {
                             TrackBrowserView(
@@ -124,6 +127,28 @@ struct WorkDetailView: View {
             }
             isUpdatingMark = false
         }
+    }
+
+    private func reviewAction(for work: WorkDetail) -> some View {
+        ReviewActionButton(
+            isMarked: work.progress != nil,
+            currentStatus: work.progress,
+            isLoading: isUpdatingMark,
+            isMenuPresented: $isMarkMenuPresented,
+            message: markMessage,
+            action: toggleMark,
+            onStatusSelected: mark
+        )
+    }
+
+    private func playlistAction(for work: WorkDetail) -> some View {
+        PlaylistActionButton(
+            workID: work.id,
+            client: client,
+            token: auth.token,
+            isMenuPresented: $isPlaylistMenuPresented,
+            onLoginRequired: onLoginRequired
+        )
     }
 }
 
@@ -362,6 +387,178 @@ private struct ReviewActionButton: View {
             }
         }
         .padding(.vertical, 6)
+    }
+}
+
+private struct PlaylistActionButton: View {
+    let workID: Int
+    let client: ASMRClient
+    let token: String?
+    @Binding var isMenuPresented: Bool
+    let onLoginRequired: () -> Void
+
+    @State private var playlists: [PlaylistSummary] = []
+    @State private var pagination: WorksPagination?
+    @State private var page = 1
+    @State private var isLoading = false
+    @State private var updatingIDs: Set<String> = []
+    @State private var message: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            button
+
+            if let message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var button: some View {
+        Button {
+            guard token != nil else {
+                onLoginRequired()
+                return
+            }
+            isMenuPresented.toggle()
+        } label: {
+            HStack {
+                Image(systemName: "playlist.badge.plus")
+                Text("添加到播放列表")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.blue)
+        .popover(isPresented: $isMenuPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            menu
+                .frame(minWidth: 280, maxWidth: 360)
+                .presentationCompactAdaptation(.popover)
+                .task(id: page) {
+                    await loadPlaylists()
+                }
+        }
+    }
+
+    private var menu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if isLoading && playlists.isEmpty {
+                ProgressView("加载播放列表...")
+                    .padding()
+            } else if playlists.isEmpty {
+                Text(message ?? "暂无播放列表")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding()
+            } else {
+                ForEach(playlists) { playlist in
+                    Button {
+                        toggle(playlist)
+                    } label: {
+                        HStack(spacing: 10) {
+                            if updatingIDs.contains(playlist.id) {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: playlist.exist ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(playlist.exist ? Color.accentColor : Color.secondary)
+                            }
+
+                            Image(systemName: playlist.systemImage)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(playlist.displayName)
+                                    .font(.callout.weight(.medium))
+                                    .lineLimit(1)
+                                Text(playlist.countText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(updatingIDs.contains(playlist.id))
+                }
+
+                if let pagination, pagination.totalPages > 1 {
+                    Divider()
+                    HStack {
+                        Button("上一页") {
+                            page = max(page - 1, 1)
+                        }
+                        .disabled(page <= 1 || isLoading)
+
+                        Spacer()
+
+                        Text("\(page) / \(pagination.totalPages)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button("下一页") {
+                            page = min(page + 1, pagination.totalPages)
+                        }
+                        .disabled(page >= pagination.totalPages || isLoading)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func loadPlaylists() async {
+        guard let token, !isLoading else { return }
+        isLoading = true
+        message = nil
+        do {
+            let response = try await client.fetchPlaylistStatus(workID: workID, page: page, token: token)
+            playlists = response.playlists
+            pagination = response.pagination
+        } catch {
+            message = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func toggle(_ playlist: PlaylistSummary) {
+        guard let token, !updatingIDs.contains(playlist.id) else { return }
+        let newExist = !playlist.exist
+        updatePlaylist(playlist.id, exist: newExist)
+        updatingIDs.insert(playlist.id)
+        message = nil
+
+        Task {
+            do {
+                if newExist {
+                    try await client.addWorkToPlaylist(playlistID: playlist.id, workID: workID, token: token)
+                } else {
+                    try await client.removeWorkFromPlaylist(playlistID: playlist.id, workID: workID, token: token)
+                }
+            } catch {
+                updatePlaylist(playlist.id, exist: !newExist)
+                message = error.localizedDescription
+            }
+            updatingIDs.remove(playlist.id)
+        }
+    }
+
+    private func updatePlaylist(_ id: String, exist: Bool) {
+        guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
+        playlists[index].worksCount = max(playlists[index].worksCount + (exist ? 1 : -1), 0)
+        playlists[index].exist = exist
     }
 }
 

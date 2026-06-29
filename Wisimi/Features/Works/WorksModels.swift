@@ -10,9 +10,83 @@ struct WorksPagination: Decodable {
     let pageSize: Int
     let totalCount: Int
 
+    private enum CodingKeys: String, CodingKey {
+        case currentPage
+        case page
+        case pageSize
+        case totalCount
+    }
+
+    init(currentPage: Int, pageSize: Int, totalCount: Int) {
+        self.currentPage = currentPage
+        self.pageSize = pageSize
+        self.totalCount = totalCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        currentPage = try container.decodeIfPresent(Int.self, forKey: .currentPage)
+            ?? container.decode(Int.self, forKey: .page)
+        pageSize = try container.decode(Int.self, forKey: .pageSize)
+        totalCount = try container.decode(Int.self, forKey: .totalCount)
+    }
+
     var totalPages: Int {
         guard pageSize > 0 else { return 1 }
         return max(Int(ceil(Double(totalCount) / Double(pageSize))), 1)
+    }
+}
+
+struct PlaylistsResponse: Decodable {
+    let playlists: [PlaylistSummary]
+    let pagination: WorksPagination
+}
+
+struct PlaylistSummary: Decodable, Identifiable, Equatable {
+    let id: String
+    var name: String
+    let privacy: Int
+    let description: String
+    var worksCount: Int
+    var exist: Bool
+
+    var countText: String { "\(worksCount) 个作品" }
+    var displayName: String {
+        switch name {
+        case "__SYS_PLAYLIST_LIKED": "我喜欢的"
+        case "__SYS_PLAYLIST_MARKED": "我标记的"
+        default: name
+        }
+    }
+    var isSystemPreserved: Bool { name.hasPrefix("__SYS_PLAYLIST_") }
+    var systemImage: String { isSystemPreserved ? "lock.fill" : "music.note.list" }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case privacy
+        case description
+        case worksCount = "works_count"
+        case exist
+    }
+
+    init(id: String, name: String, privacy: Int, description: String, worksCount: Int, exist: Bool = false) {
+        self.id = id
+        self.name = name
+        self.privacy = privacy
+        self.description = description
+        self.worksCount = worksCount
+        self.exist = exist
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        privacy = try container.decode(Int.self, forKey: .privacy)
+        description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        worksCount = try container.decodeIfPresent(Int.self, forKey: .worksCount) ?? 0
+        exist = try container.decodeIfPresent(Bool.self, forKey: .exist) ?? false
     }
 }
 
@@ -157,12 +231,23 @@ enum DecodeSelfCheck {
     static func run() {
         let decoder = JSONDecoder()
         let list = #"{"works":[{"id":1,"title":"Work","name":"Circle","duration":90,"rate_average_2dp":4.8,"has_subtitle":true,"thumbnailCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}],"pagination":{"currentPage":1,"pageSize":20,"totalCount":42}}"#
+        let playlistWorks = #"{"works":[{"id":1172778,"title":"Work","name":"Circle","duration":11539,"rate_average_2dp":4.85,"has_subtitle":false,"thumbnailCoverUrl":"https://example.com/cover.jpg","tags":[{"id":68,"name":"淫语"}],"vas":[{"id":"va","name":"天知遥"}]}],"pagination":{"page":1,"pageSize":12,"totalCount":1}}"#
+        let playlists = #"{"playlists":[{"id":"playlist-id","name":"Playlist","privacy":0,"description":"probe","works_count":1,"exist":true}],"pagination":{"page":1,"pageSize":12,"totalCount":1}}"#
         let detail = #"{"id":1,"title":"Work","name":"Circle","duration":90,"dl_count":2,"rate_average_2dp":4.8,"has_subtitle":true,"mainCoverUrl":"https://example.com/a.jpg","progress":"marked","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}"#
         let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4,"mediaDownloadUrl":"https://example.com/01.mp3"},{"type":"text","title":"01.vtt","mediaDownloadUrl":"https://example.com/01.vtt"},{"type":"image","title":"cover.jpg"}]}]"#
 
         let worksResponse = try? decoder.decode(WorksResponse.self, from: Data(list.utf8))
         assert(worksResponse?.works.count == 1)
         assert(worksResponse?.pagination.totalPages == 3)
+        let playlistWorksResponse = try? decoder.decode(WorksResponse.self, from: Data(playlistWorks.utf8))
+        assert(playlistWorksResponse?.pagination.currentPage == 1)
+        assert(playlistWorksResponse?.works.first?.id == 1172778)
+        let playlistsResponse = try? decoder.decode(PlaylistsResponse.self, from: Data(playlists.utf8))
+        assert(playlistsResponse?.playlists.first?.exist == true)
+        assert(playlistsResponse?.playlists.first?.worksCount == 1)
+        assert(PlaylistSummary(id: "liked", name: "__SYS_PLAYLIST_LIKED", privacy: 0, description: "", worksCount: 0).displayName == "我喜欢的")
+        assert(PlaylistSummary(id: "marked", name: "__SYS_PLAYLIST_MARKED", privacy: 0, description: "", worksCount: 0).displayName == "我标记的")
+        assert(PlaylistSummary(id: "custom", name: "自定义", privacy: 0, description: "", worksCount: 0).isSystemPreserved == false)
         let decodedDetail = try? decoder.decode(WorkDetail.self, from: Data(detail.utf8))
         assert(decodedDetail?.tags.first?.name == "耳かき")
         assert(decodedDetail?.progress == .marked)

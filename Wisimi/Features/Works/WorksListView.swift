@@ -16,6 +16,8 @@ struct WorksListView: View {
     @State private var activeSearchText = ""
     @State private var filter = WorksFilter.default
     @State private var reviewFilter = ReviewFilter.default
+    @State private var playlists: [PlaylistSummary] = []
+    @State private var selectedPlaylistID: String?
     @State private var isFilterPresented = false
     @State private var isLoginPresented = false
     @State private var isNarrationSettingsPresented = false
@@ -46,6 +48,7 @@ struct WorksListView: View {
                             selectedMode: selectedMode,
                             filter: filter,
                             reviewFilter: reviewFilter,
+                            selectedPlaylist: selectedPlaylist,
                             isSearchFocused: $isSearchFocused,
                             onSearch: runSearch,
                             onClearSearch: clearSearch,
@@ -162,11 +165,20 @@ struct WorksListView: View {
                 }
             }
             .sheet(isPresented: $isFilterPresented) {
-                WorksFilterSheet(mode: selectedMode, filter: filter, reviewFilter: reviewFilter) { newFilter in
+                WorksFilterSheet(
+                    mode: selectedMode,
+                    filter: filter,
+                    reviewFilter: reviewFilter,
+                    playlists: playlists,
+                    selectedPlaylistID: selectedPlaylistID
+                ) { newFilter in
                     filter = newFilter
                     Task { await reloadFromFirstPage() }
                 } onApplyReviewFilter: { newFilter in
                     reviewFilter = newFilter
+                    Task { await reloadFromFirstPage() }
+                } onApplyPlaylist: { playlistID in
+                    selectedPlaylistID = playlistID
                     Task { await reloadFromFirstPage() }
                 }
                 .presentationDetents([.medium, .large])
@@ -248,6 +260,11 @@ struct WorksListView: View {
         await loadWorks(page: 1)
     }
 
+    private var selectedPlaylist: PlaylistSummary? {
+        guard let selectedPlaylistID else { return nil }
+        return playlists.first { $0.id == selectedPlaylistID }
+    }
+
     private func loadWorks(page: Int = 1) async {
         guard !isLoading else { return }
         if let totalPages = pagination?.totalPages, page > totalPages { return }
@@ -268,6 +285,10 @@ struct WorksListView: View {
                 case .favorites:
                     guard let token = auth.token else { throw ASMRClientError.loginRequired }
                     response = try await client.fetchFavorites(page: page, token: token, filter: reviewFilter)
+                case .playlists:
+                    guard let token = auth.token else { throw ASMRClientError.loginRequired }
+                    let playlistID = try await ensureSelectedPlaylist(token: token)
+                    response = try await client.fetchPlaylistWorks(id: playlistID, page: page, token: token)
                 case .recommended:
                     guard let token = auth.token else { throw ASMRClientError.loginRequired }
                     guard let uuid = auth.recommenderUuid, !uuid.isEmpty else { throw ASMRClientError.missingRecommenderUuid }
@@ -282,6 +303,18 @@ struct WorksListView: View {
         }
         isLoading = false
     }
+
+    private func ensureSelectedPlaylist(token: String) async throws -> String {
+        if let selectedPlaylistID, playlists.contains(where: { $0.id == selectedPlaylistID }) {
+            return selectedPlaylistID
+        }
+
+        let response = try await client.fetchPlaylists(token: token)
+        playlists = response.playlists
+        guard let first = response.playlists.first else { throw ASMRClientError.noPlaylists }
+        selectedPlaylistID = first.id
+        return first.id
+    }
 }
 
 private enum WorksRoute: Hashable {
@@ -293,6 +326,7 @@ private enum WorksMode: String, CaseIterable, Identifiable {
     case latest
     case popular
     case favorites
+    case playlists
     case recommended
 
     var id: String { rawValue }
@@ -302,6 +336,7 @@ private enum WorksMode: String, CaseIterable, Identifiable {
         case .latest: "最新"
         case .popular: "热门作品"
         case .favorites: "收藏"
+        case .playlists: "播放列表"
         case .recommended: "推荐作品"
         }
     }
@@ -311,6 +346,7 @@ private enum WorksMode: String, CaseIterable, Identifiable {
         case .latest: "clock"
         case .popular: "flame"
         case .favorites: "heart"
+        case .playlists: "music.note.list"
         case .recommended: "sparkles"
         }
     }
@@ -318,7 +354,7 @@ private enum WorksMode: String, CaseIterable, Identifiable {
     var requiresLogin: Bool {
         switch self {
         case .latest, .popular: false
-        case .favorites, .recommended: true
+        case .favorites, .playlists, .recommended: true
         }
     }
 }
@@ -385,6 +421,7 @@ private struct WorksSearchHeader: View {
     let selectedMode: WorksMode
     let filter: WorksFilter
     let reviewFilter: ReviewFilter
+    let selectedPlaylist: PlaylistSummary?
     var isSearchFocused: FocusState<Bool>.Binding
     let onSearch: () -> Void
     let onClearSearch: () -> Void
@@ -471,6 +508,10 @@ private struct WorksSearchHeader: View {
             return "\(reviewFilter.status.title) · \(reviewFilter.order.title) · \(reviewFilter.sort.title(for: reviewFilter.order))"
         }
 
+        if selectedMode == .playlists {
+            return selectedPlaylist.map { "\($0.displayName) · \($0.countText)" } ?? "播放列表"
+        }
+
         guard filter != .default else { return nil }
         var parts: [String] = []
         if filter.hasSubtitle {
@@ -486,21 +527,30 @@ private struct WorksFilterSheet: View {
     let mode: WorksMode
     @State private var draft: WorksFilter
     @State private var reviewDraft: ReviewFilter
+    @State private var playlistID: String?
+    let playlists: [PlaylistSummary]
     let onApply: (WorksFilter) -> Void
     let onApplyReviewFilter: (ReviewFilter) -> Void
+    let onApplyPlaylist: (String) -> Void
 
     init(
         mode: WorksMode,
         filter: WorksFilter,
         reviewFilter: ReviewFilter,
+        playlists: [PlaylistSummary],
+        selectedPlaylistID: String?,
         onApply: @escaping (WorksFilter) -> Void,
-        onApplyReviewFilter: @escaping (ReviewFilter) -> Void
+        onApplyReviewFilter: @escaping (ReviewFilter) -> Void,
+        onApplyPlaylist: @escaping (String) -> Void
     ) {
         self.mode = mode
         _draft = State(initialValue: filter)
         _reviewDraft = State(initialValue: reviewFilter)
+        _playlistID = State(initialValue: selectedPlaylistID ?? playlists.first?.id)
+        self.playlists = playlists
         self.onApply = onApply
         self.onApplyReviewFilter = onApplyReviewFilter
+        self.onApplyPlaylist = onApplyPlaylist
     }
 
     var body: some View {
@@ -531,6 +581,26 @@ private struct WorksFilterSheet: View {
                         }
                         .pickerStyle(.segmented)
                     }
+                } else if mode == .playlists {
+                    Section("播放列表") {
+                        if playlists.isEmpty {
+                            Text("暂无播放列表")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker("", selection: $playlistID) {
+                                ForEach(playlists) { playlist in
+                                    Label {
+                                        Text("\(playlist.displayName) · \(playlist.countText)")
+                                    } icon: {
+                                        Image(systemName: playlist.systemImage)
+                                    }
+                                    .tag(Optional(playlist.id))
+                                }
+                            }
+                            .pickerStyle(.inline)
+                            .labelsHidden()
+                        }
+                    }
                 } else {
                     Section {
                         Toggle("有字幕", isOn: $draft.hasSubtitle)
@@ -558,6 +628,8 @@ private struct WorksFilterSheet: View {
                     Button("重置") {
                         if mode == .favorites {
                             reviewDraft = .default
+                        } else if mode == .playlists {
+                            playlistID = playlists.first?.id
                         } else {
                             draft = .default
                         }
@@ -567,6 +639,10 @@ private struct WorksFilterSheet: View {
                     Button("应用") {
                         if mode == .favorites {
                             onApplyReviewFilter(reviewDraft)
+                        } else if mode == .playlists {
+                            if let playlistID {
+                                onApplyPlaylist(playlistID)
+                            }
                         } else {
                             onApply(draft)
                         }
