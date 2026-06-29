@@ -288,7 +288,7 @@ private enum WorksMode: String, CaseIterable, Identifiable {
         case .latest: "最新"
         case .popular: "热门作品"
         case .favorites: "收藏"
-        case .recommended: "为你推荐"
+        case .recommended: "推荐作品"
         }
     }
 
