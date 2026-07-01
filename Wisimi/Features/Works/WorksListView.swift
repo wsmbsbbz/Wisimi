@@ -170,7 +170,9 @@ struct WorksListView: View {
                     filter: filter,
                     reviewFilter: reviewFilter,
                     playlists: playlists,
-                    selectedPlaylistID: selectedPlaylistID
+                    selectedPlaylistID: selectedPlaylistID,
+                    client: client,
+                    token: auth.token
                 ) { newFilter in
                     filter = newFilter
                     Task { await reloadFromFirstPage() }
@@ -180,6 +182,14 @@ struct WorksListView: View {
                 } onApplyPlaylist: { playlistID in
                     selectedPlaylistID = playlistID
                     Task { await reloadFromFirstPage() }
+                } onPlaylistCreated: { playlist in
+                    upsertPlaylist(playlist)
+                    selectedPlaylistID = playlist.id
+                    Task { await reloadFromFirstPage() }
+                } onPlaylistUpdated: { playlist in
+                    upsertPlaylist(playlist)
+                } onPlaylistDeleted: { playlistID in
+                    deleteLocalPlaylist(id: playlistID)
                 }
                 .presentationDetents([.medium, .large])
             }
@@ -314,6 +324,22 @@ struct WorksListView: View {
         guard let first = response.playlists.first else { throw ASMRClientError.noPlaylists }
         selectedPlaylistID = first.id
         return first.id
+    }
+
+    private func upsertPlaylist(_ playlist: PlaylistSummary) {
+        if let index = playlists.firstIndex(where: { $0.id == playlist.id }) {
+            playlists[index] = playlist
+        } else {
+            playlists.append(playlist)
+        }
+    }
+
+    private func deleteLocalPlaylist(id: String) {
+        playlists.removeAll { $0.id == id }
+        if selectedPlaylistID == id {
+            selectedPlaylistID = playlists.first?.id
+            Task { await reloadFromFirstPage() }
+        }
     }
 }
 
@@ -528,10 +554,20 @@ private struct WorksFilterSheet: View {
     @State private var draft: WorksFilter
     @State private var reviewDraft: ReviewFilter
     @State private var playlistID: String?
-    let playlists: [PlaylistSummary]
+    @State private var managedPlaylists: [PlaylistSummary]
+    @State private var playlistEditor: PlaylistEditor?
+    @State private var playlistActions: PlaylistSummary?
+    @State private var playlistToDelete: PlaylistSummary?
+    @State private var isDeleting = false
+    @State private var mutationMessage: String?
+    let client: ASMRClient
+    let token: String?
     let onApply: (WorksFilter) -> Void
     let onApplyReviewFilter: (ReviewFilter) -> Void
     let onApplyPlaylist: (String) -> Void
+    let onPlaylistCreated: (PlaylistSummary) -> Void
+    let onPlaylistUpdated: (PlaylistSummary) -> Void
+    let onPlaylistDeleted: (String) -> Void
 
     init(
         mode: WorksMode,
@@ -539,18 +575,28 @@ private struct WorksFilterSheet: View {
         reviewFilter: ReviewFilter,
         playlists: [PlaylistSummary],
         selectedPlaylistID: String?,
+        client: ASMRClient,
+        token: String?,
         onApply: @escaping (WorksFilter) -> Void,
         onApplyReviewFilter: @escaping (ReviewFilter) -> Void,
-        onApplyPlaylist: @escaping (String) -> Void
+        onApplyPlaylist: @escaping (String) -> Void,
+        onPlaylistCreated: @escaping (PlaylistSummary) -> Void,
+        onPlaylistUpdated: @escaping (PlaylistSummary) -> Void,
+        onPlaylistDeleted: @escaping (String) -> Void
     ) {
         self.mode = mode
         _draft = State(initialValue: filter)
         _reviewDraft = State(initialValue: reviewFilter)
         _playlistID = State(initialValue: selectedPlaylistID ?? playlists.first?.id)
-        self.playlists = playlists
+        _managedPlaylists = State(initialValue: playlists)
+        self.client = client
+        self.token = token
         self.onApply = onApply
         self.onApplyReviewFilter = onApplyReviewFilter
         self.onApplyPlaylist = onApplyPlaylist
+        self.onPlaylistCreated = onPlaylistCreated
+        self.onPlaylistUpdated = onPlaylistUpdated
+        self.onPlaylistDeleted = onPlaylistDeleted
     }
 
     var body: some View {
@@ -583,22 +629,67 @@ private struct WorksFilterSheet: View {
                     }
                 } else if mode == .playlists {
                     Section("播放列表") {
-                        if playlists.isEmpty {
+                        if managedPlaylists.isEmpty {
                             Text("暂无播放列表")
                                 .foregroundStyle(.secondary)
                         } else {
-                            Picker("", selection: $playlistID) {
-                                ForEach(playlists) { playlist in
-                                    Label {
-                                        Text("\(playlist.displayName) · \(playlist.countText)")
-                                    } icon: {
-                                        Image(systemName: playlist.systemImage)
+                            ForEach(managedPlaylists) { playlist in
+                                HStack(spacing: 10) {
+                                    Button {
+                                        playlistID = playlist.id
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            if let systemImage = playlist.systemImage {
+                                                Image(systemName: systemImage)
+                                                    .foregroundStyle(.secondary)
+                                            }
+
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(playlist.displayName)
+                                                    .foregroundStyle(.primary)
+                                                    .lineLimit(1)
+                                                Text(playlist.countText)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+
+                                            Spacer()
+
+                                            if playlistID == playlist.id {
+                                                Image(systemName: "checkmark")
+                                                    .foregroundStyle(.primary)
+                                            }
+                                        }
+                                        .contentShape(.rect)
                                     }
-                                    .tag(Optional(playlist.id))
+                                    .buttonStyle(.plain)
+
+                                    if !playlist.isSystemPreserved {
+                                        Button {
+                                            playlistActions = playlist
+                                        } label: {
+                                            Image(systemName: "pencil")
+                                                .frame(width: 34, height: 34)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .foregroundStyle(.secondary)
+                                        .accessibilityLabel("编辑\(playlist.displayName)")
+                                    }
                                 }
                             }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
+                        }
+                    }
+
+                    Section("管理") {
+                        Button {
+                            playlistEditor = .create
+                        } label: {
+                            Label("新建播放列表", systemImage: "plus")
+                        }
+
+                        if let mutationMessage {
+                            Text(mutationMessage)
+                                .foregroundStyle(.red)
                         }
                     }
                 } else {
@@ -629,7 +720,7 @@ private struct WorksFilterSheet: View {
                         if mode == .favorites {
                             reviewDraft = .default
                         } else if mode == .playlists {
-                            playlistID = playlists.first?.id
+                            playlistID = managedPlaylists.first?.id
                         } else {
                             draft = .default
                         }
@@ -650,7 +741,282 @@ private struct WorksFilterSheet: View {
                     }
                 }
             }
+            .sheet(item: $playlistEditor) { editor in
+                PlaylistEditorSheet(editor: editor, client: client, token: token) { playlist in
+                    apply(playlist, from: editor)
+                }
+            }
+            .sheet(item: $playlistActions) { playlist in
+                PlaylistActionsSheet(playlist: playlist) {
+                    playlistActions = nil
+                    playlistEditor = .edit(playlist)
+                } onDelete: {
+                    playlistActions = nil
+                    playlistToDelete = playlist
+                }
+                    .presentationDetents([.height(220)])
+            }
+            .confirmationDialog("删除播放列表？", isPresented: deleteConfirmation) {
+                Button("删除", role: .destructive) {
+                    if let playlistToDelete {
+                        Task { await deletePlaylist(playlistToDelete) }
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("删除后无法恢复。")
+            }
         }
+    }
+
+    private var deleteConfirmation: Binding<Bool> {
+        Binding {
+            playlistToDelete != nil
+        } set: { isPresented in
+            if !isPresented {
+                playlistToDelete = nil
+            }
+        }
+    }
+
+    private func apply(_ playlist: PlaylistSummary, from editor: PlaylistEditor) {
+        if let index = managedPlaylists.firstIndex(where: { $0.id == playlist.id }) {
+            managedPlaylists[index] = playlist
+        } else {
+            managedPlaylists.append(playlist)
+        }
+        playlistID = playlist.id
+        mutationMessage = nil
+
+        switch editor {
+        case .create:
+            onPlaylistCreated(playlist)
+        case .edit:
+            onPlaylistUpdated(playlist)
+        }
+    }
+
+    private func deletePlaylist(_ playlist: PlaylistSummary) async {
+        guard let token else {
+            mutationMessage = "请先登录"
+            return
+        }
+
+        isDeleting = true
+        mutationMessage = nil
+        do {
+            let deletedID = try await client.deletePlaylist(id: playlist.id, token: token)
+            managedPlaylists.removeAll { $0.id == deletedID }
+            if playlistID == deletedID {
+                playlistID = managedPlaylists.first?.id
+            }
+            onPlaylistDeleted(deletedID)
+            playlistToDelete = nil
+        } catch {
+            mutationMessage = error.localizedDescription
+        }
+        isDeleting = false
+    }
+}
+
+private struct PlaylistActionsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let playlist: PlaylistSummary
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Button {
+                        dismiss()
+                        onEdit()
+                    } label: {
+                        Label("编辑", systemImage: "pencil")
+                    }
+
+                    Button(role: .destructive) {
+                        dismiss()
+                        onDelete()
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
+            }
+            .navigationTitle(playlist.displayName)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private enum PlaylistEditor: Identifiable {
+    case create
+    case edit(PlaylistSummary)
+
+    var id: String {
+        switch self {
+        case .create: "create"
+        case .edit(let playlist): "edit-\(playlist.id)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .create: "新建播放列表"
+        case .edit: "编辑播放列表"
+        }
+    }
+
+    var submitTitle: String {
+        switch self {
+        case .create: "创建"
+        case .edit: "保存"
+        }
+    }
+}
+
+private enum PlaylistPrivacy: Int, CaseIterable, Identifiable {
+    case `private` = 0
+    case unlisted = 1
+    case `public` = 2
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .private: "私享"
+        case .unlisted: "不公开"
+        case .public: "公开"
+        }
+    }
+}
+
+private struct PlaylistEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let editor: PlaylistEditor
+    let client: ASMRClient
+    let token: String?
+    let onSaved: (PlaylistSummary) -> Void
+    @State private var name: String
+    @State private var description: String
+    @State private var privacy: PlaylistPrivacy
+    @State private var isSaving = false
+    @State private var message: String?
+
+    init(editor: PlaylistEditor, client: ASMRClient, token: String?, onSaved: @escaping (PlaylistSummary) -> Void) {
+        self.editor = editor
+        self.client = client
+        self.token = token
+        self.onSaved = onSaved
+
+        switch editor {
+        case .create:
+            _name = State(initialValue: "")
+            _description = State(initialValue: "")
+            _privacy = State(initialValue: .private)
+        case .edit(let playlist):
+            _name = State(initialValue: playlist.displayName)
+            _description = State(initialValue: playlist.description)
+            _privacy = State(initialValue: PlaylistPrivacy(rawValue: playlist.privacy) ?? .private)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("名称", text: $name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    TextField("描述", text: $description, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+
+                Section("隐私") {
+                    Picker("隐私", selection: $privacy) {
+                        ForEach(PlaylistPrivacy.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                if let message {
+                    Section {
+                        Text(message)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle(editor.title)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task { await save() }
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                        } else {
+                            Text(editor.submitTitle)
+                        }
+                    }
+                    .disabled(isSaving || trimmedName.isEmpty || token == nil)
+                }
+            }
+        }
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func save() async {
+        guard let token else {
+            message = "请先登录"
+            return
+        }
+
+        isSaving = true
+        message = nil
+        do {
+            let playlist: PlaylistSummary
+            switch editor {
+            case .create:
+                playlist = try await client.createPlaylist(
+                    name: trimmedName,
+                    privacy: privacy.rawValue,
+                    description: description,
+                    token: token
+                )
+            case .edit(let existing):
+                playlist = try await client.updatePlaylistMetadata(
+                    id: existing.id,
+                    name: trimmedName,
+                    privacy: privacy.rawValue,
+                    description: description,
+                    token: token
+                )
+            }
+            onSaved(playlist)
+            dismiss()
+        } catch {
+            message = error.localizedDescription
+        }
+        isSaving = false
     }
 }
 

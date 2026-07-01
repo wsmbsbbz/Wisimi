@@ -478,8 +478,10 @@ private struct PlaylistActionButton: View {
                                             .foregroundStyle(playlist.exist ? Color.primary : Color.secondary)
                                     }
 
-                                    Image(systemName: playlist.systemImage)
-                                        .foregroundStyle(.secondary)
+                                    if let systemImage = playlist.systemImage {
+                                        Image(systemName: systemImage)
+                                            .foregroundStyle(.secondary)
+                                    }
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(playlist.displayName)

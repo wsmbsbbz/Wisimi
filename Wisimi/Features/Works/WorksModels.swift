@@ -59,7 +59,7 @@ struct PlaylistSummary: Decodable, Identifiable, Equatable {
         }
     }
     var isSystemPreserved: Bool { name.hasPrefix("__SYS_PLAYLIST_") }
-    var systemImage: String { isSystemPreserved ? "lock.fill" : "music.note.list" }
+    var systemImage: String? { isSystemPreserved ? "lock.fill" : nil }
 
     private enum CodingKeys: String, CodingKey {
         case id

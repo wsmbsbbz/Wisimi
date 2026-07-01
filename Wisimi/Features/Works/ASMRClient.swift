@@ -62,6 +62,31 @@ struct ASMRClient {
         try await fetch(playlistStatusURL(workID: workID, page: page, pageSize: pageSize), token: token)
     }
 
+    func createPlaylist(name: String, privacy: Int, description: String, locale: String = "zh-CN", token: String) async throws -> PlaylistSummary {
+        try await postJSON(
+            baseURL.appending(path: "playlist/create-playlist"),
+            body: PlaylistCreateRequest(name: name, privacy: privacy, locale: locale, description: description, works: []),
+            token: token
+        )
+    }
+
+    func updatePlaylistMetadata(id: String, name: String, privacy: Int, description: String, token: String) async throws -> PlaylistSummary {
+        try await postJSON(
+            baseURL.appending(path: "playlist/edit-playlist-metadata"),
+            body: PlaylistMetadataEditRequest(id: id, data: PlaylistMetadata(name: name, privacy: privacy, description: description)),
+            token: token
+        )
+    }
+
+    func deletePlaylist(id: String, token: String) async throws -> String {
+        let response: PlaylistDeleteResponse = try await postJSON(
+            baseURL.appending(path: "playlist/delete-playlist"),
+            body: PlaylistDeleteRequest(id: id),
+            token: token
+        )
+        return response.id
+    }
+
     func addWorkToPlaylist(playlistID: String, workID: Int, token: String) async throws {
         let _: PlaylistMutationResponse = try await postJSON(
             baseURL.appending(path: "playlist/add-works-to-playlist"),
@@ -245,6 +270,33 @@ private struct MarkWorkRequest: Encodable {
 private struct PlaylistWorksRequest: Encodable {
     let id: String
     let works: [Int]
+}
+
+private struct PlaylistCreateRequest: Encodable {
+    let name: String
+    let privacy: Int
+    let locale: String
+    let description: String
+    let works: [Int]
+}
+
+private struct PlaylistMetadataEditRequest: Encodable {
+    let id: String
+    let data: PlaylistMetadata
+}
+
+private struct PlaylistMetadata: Encodable {
+    let name: String
+    let privacy: Int
+    let description: String
+}
+
+private struct PlaylistDeleteRequest: Encodable {
+    let id: String
+}
+
+private struct PlaylistDeleteResponse: Decodable {
+    let id: String
 }
 
 private struct PlaylistMutationResponse: Decodable {
