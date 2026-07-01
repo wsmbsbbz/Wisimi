@@ -135,13 +135,6 @@ struct WorksListView: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                if player.currentTrack != nil {
-                    MiniPlayerBar(player: player) {
-                        openPlayer()
-                    }
-                }
-            }
             .navigationDestination(for: WorksRoute.self) { route in
                 switch route {
                 case .detail(let workID):
@@ -153,13 +146,6 @@ struct WorksListView: View {
                         onTagSearch: searchTag,
                         onLoginRequired: { isLoginPresented = true }
                     )
-                        .safeAreaInset(edge: .bottom) {
-                            if player.currentTrack != nil {
-                                MiniPlayerBar(player: player) {
-                                    openPlayer(from: workID)
-                                }
-                            }
-                        }
                 case .player:
                     PlayerView(player: player)
                 }
@@ -207,9 +193,22 @@ struct WorksListView: View {
                     .presentationDetents([.medium])
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if shouldShowMiniPlayer {
+                MiniPlayerBar(player: player) {
+                    openPlayer()
+                }
+            }
+        }
         .task {
             await loadWorks(page: currentPage)
         }
+    }
+
+    private var shouldShowMiniPlayer: Bool {
+        guard player.currentTrack != nil else { return false }
+        if case .player? = path.last { return false }
+        return true
     }
 
     private func openPlayer(from detailWorkID: Int? = nil) {
