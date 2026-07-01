@@ -357,7 +357,7 @@ private struct ReviewActionButton: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.bordered)
         .tint(isMarked ? .red : .accentColor)
         .disabled(isLoading)
         .sheet(isPresented: $isMenuPresented) {
@@ -436,7 +436,7 @@ private struct PlaylistActionButton: View {
             isMenuPresented.toggle()
         } label: {
             HStack {
-                Image(systemName: "playlist.badge.plus")
+                Image(systemName: "plus")
                 Text("添加到播放列表")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -444,7 +444,7 @@ private struct PlaylistActionButton: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.bordered)
         .tint(.blue)
         .sheet(isPresented: $isMenuPresented) {
             menu

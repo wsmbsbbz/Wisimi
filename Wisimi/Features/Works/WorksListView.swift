@@ -500,7 +500,7 @@ private struct WorksSearchHeader: View {
                                 .font(.subheadline.weight(.semibold))
                                 .lineLimit(1)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                         .tint(selectedMode == mode && activeSearchText.isEmpty ? .accentColor : .secondary.opacity(0.18))
                         .foregroundStyle(selectedMode == mode && activeSearchText.isEmpty ? .white : .primary)
                     }
