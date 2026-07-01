@@ -360,33 +360,44 @@ private struct ReviewActionButton: View {
         .buttonStyle(.borderedProminent)
         .tint(isMarked ? .red : .accentColor)
         .disabled(isLoading)
-        .popover(isPresented: $isMenuPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+        .sheet(isPresented: $isMenuPresented) {
             markMenu
-                .presentationCompactAdaptation(.popover)
+                .presentationDetents([.medium])
         }
     }
 
     private var markMenu: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(ReviewStatus.allCases) { status in
-                Button {
-                    isMenuPresented = false
-                    onStatusSelected(status)
-                } label: {
-                    HStack {
-                        Text(status.title)
-                            .font(.callout.weight(.medium))
-                        Spacer()
+        NavigationStack {
+            Form {
+                Section("状态") {
+                    ForEach(ReviewStatus.allCases) { status in
+                        Button {
+                            isMenuPresented = false
+                            onStatusSelected(status)
+                        } label: {
+                            HStack {
+                                Text(status.title)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                if currentStatus == status {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .frame(minWidth: 120, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+            }
+            .navigationTitle("标记")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") {
+                        isMenuPresented = false
+                    }
+                }
             }
         }
-        .padding(.vertical, 6)
     }
 }
 
@@ -435,10 +446,9 @@ private struct PlaylistActionButton: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(.blue)
-        .popover(isPresented: $isMenuPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+        .sheet(isPresented: $isMenuPresented) {
             menu
-                .frame(minWidth: 280, maxWidth: 360)
-                .presentationCompactAdaptation(.popover)
+                .presentationDetents([.medium, .large])
                 .task(id: page) {
                     await loadPlaylists()
                 }
@@ -446,77 +456,85 @@ private struct PlaylistActionButton: View {
     }
 
     private var menu: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if isLoading && playlists.isEmpty {
-                ProgressView("加载播放列表...")
-                    .padding()
-            } else if playlists.isEmpty {
-                Text(message ?? "暂无播放列表")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding()
-            } else {
-                ForEach(playlists) { playlist in
-                    Button {
-                        toggle(playlist)
-                    } label: {
-                        HStack(spacing: 10) {
-                            if updatingIDs.contains(playlist.id) {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: playlist.exist ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(playlist.exist ? Color.accentColor : Color.secondary)
+        NavigationStack {
+            Form {
+                Section("播放列表") {
+                    if isLoading && playlists.isEmpty {
+                        ProgressView("加载播放列表...")
+                    } else if playlists.isEmpty {
+                        Text(message ?? "暂无播放列表")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(playlists) { playlist in
+                            Button {
+                                toggle(playlist)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if updatingIDs.contains(playlist.id) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Image(systemName: playlist.exist ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(playlist.exist ? Color.primary : Color.secondary)
+                                    }
+
+                                    Image(systemName: playlist.systemImage)
+                                        .foregroundStyle(.secondary)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(playlist.displayName)
+                                            .lineLimit(1)
+                                            .foregroundStyle(.primary)
+                                        Text(playlist.countText)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+                                }
+                                .contentShape(.rect)
                             }
-
-                            Image(systemName: playlist.systemImage)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(playlist.displayName)
-                                    .font(.callout.weight(.medium))
-                                    .lineLimit(1)
-                                Text(playlist.countText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Spacer()
+                            .buttonStyle(.plain)
+                            .disabled(updatingIDs.contains(playlist.id))
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(updatingIDs.contains(playlist.id))
                 }
 
                 if let pagination, pagination.totalPages > 1 {
-                    Divider()
-                    HStack {
-                        Button("上一页") {
-                            page = max(page - 1, 1)
+                    Section {
+                        HStack {
+                            Button("上一页") {
+                                page = max(page - 1, 1)
+                            }
+                            .foregroundStyle(.primary)
+                            .disabled(page <= 1 || isLoading)
+
+                            Spacer()
+
+                            Text("\(page) / \(pagination.totalPages)")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+
+                            Spacer()
+
+                            Button("下一页") {
+                                page = min(page + 1, pagination.totalPages)
+                            }
+                            .foregroundStyle(.primary)
+                            .disabled(page >= pagination.totalPages || isLoading)
                         }
-                        .disabled(page <= 1 || isLoading)
-
-                        Spacer()
-
-                        Text("\(page) / \(pagination.totalPages)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        Button("下一页") {
-                            page = min(page + 1, pagination.totalPages)
-                        }
-                        .disabled(page >= pagination.totalPages || isLoading)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                }
+            }
+            .navigationTitle("添加到播放列表")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") {
+                        isMenuPresented = false
+                    }
                 }
             }
         }
-        .padding(.vertical, 6)
     }
 
     private func loadPlaylists() async {
@@ -527,6 +545,7 @@ private struct PlaylistActionButton: View {
             let response = try await client.fetchPlaylistStatus(workID: workID, page: page, token: token)
             playlists = response.playlists
             pagination = response.pagination
+        } catch is CancellationError {
         } catch {
             message = error.localizedDescription
         }
@@ -547,6 +566,8 @@ private struct PlaylistActionButton: View {
                 } else {
                     try await client.removeWorkFromPlaylist(playlistID: playlist.id, workID: workID, token: token)
                 }
+            } catch is CancellationError {
+                updatePlaylist(playlist.id, exist: !newExist)
             } catch {
                 updatePlaylist(playlist.id, exist: !newExist)
                 message = error.localizedDescription
