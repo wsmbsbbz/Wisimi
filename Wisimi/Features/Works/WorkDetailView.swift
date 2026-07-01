@@ -8,7 +8,7 @@ struct WorkDetailView: View {
     let client: ASMRClient
     @ObservedObject var auth: AuthSession
     let player: WorkAudioPlayer
-    let onTagSearch: (String) -> Void
+    let onSearch: (String, String) -> Void
     let onLoginRequired: () -> Void
 
     @State private var work: WorkDetail?
@@ -31,7 +31,7 @@ struct WorkDetailView: View {
             } else if let work {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        DetailHero(work: work, onTagSearch: onTagSearch)
+                        DetailHero(work: work, onSearch: onSearch)
 
                         ViewThatFits(in: .horizontal) {
                             HStack(alignment: .top, spacing: 10) {
@@ -598,7 +598,7 @@ private struct TrackDisplayItem: Identifiable {
 
 struct DetailHero: View {
     let work: WorkDetail
-    let onTagSearch: (String) -> Void
+    let onSearch: (String, String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -640,14 +640,24 @@ struct DetailHero: View {
                     }
 
                     ForEach(work.vas) { actor in
-                        VoiceActorChip(text: actor.name)
+                        Button {
+                            onSearch("va", actor.name)
+                        } label: {
+                            VoiceActorChip(text: actor.name)
+                        }
+                        .buttonStyle(.plain)
                     }
 
-                    CircleChip(text: work.name)
+                    Button {
+                        onSearch("circle", work.name)
+                    } label: {
+                        CircleChip(text: work.name)
+                    }
+                    .buttonStyle(.plain)
 
                     ForEach(work.tags) { tag in
                         Button {
-                            onTagSearch(tag.name)
+                            onSearch("tag", tag.name)
                         } label: {
                             TagChip(text: tag.name)
                         }

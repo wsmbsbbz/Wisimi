@@ -143,7 +143,7 @@ struct WorksListView: View {
                         client: client,
                         auth: auth,
                         player: player,
-                        onTagSearch: searchTag,
+                        onSearch: search,
                         onLoginRequired: { isLoginPresented = true }
                     )
                 case .player:
@@ -242,8 +242,8 @@ struct WorksListView: View {
         Task { await reloadFromFirstPage() }
     }
 
-    private func searchTag(_ tagName: String) {
-        searchText = "$tag:\(tagName)$"
+    private func search(prefix: String, name: String) {
+        searchText = "$\(prefix):\(name)$"
         activeSearchText = searchText
         isSearchFocused = false
         path = []
