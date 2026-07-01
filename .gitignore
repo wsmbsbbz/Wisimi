@@ -30,6 +30,8 @@ Carthage/Build/
 tmp/
 doc/
 requirement/
+.codex/
+openspec/
 
 # Logs
 *.log
