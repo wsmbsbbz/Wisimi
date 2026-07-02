@@ -155,6 +155,9 @@ private struct PlayerControls: View {
 private struct SubtitleListView: View {
     @ObservedObject var player: WorkAudioPlayer
     let hideSubtitles: () -> Void
+    @GestureState private var isTouchingSubtitleList = false
+    @State private var subtitleAutoScrollResumeAt = Date.distantPast
+    @State private var subtitleInteractionToken = 0
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -194,6 +197,12 @@ private struct SubtitleListView: View {
                     }
                 }
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($isTouchingSubtitleList) { _, state, _ in
+                        state = true
+                    }
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(.rect)
             .gesture(
@@ -207,11 +216,41 @@ private struct SubtitleListView: View {
             }
             .clipShape(.rect(cornerRadius: 20))
             .onChange(of: player.currentSubtitleIndex) {
-                guard let index = player.currentSubtitleIndex else { return }
-                withAnimation(.easeOut(duration: 0.25)) {
-                    proxy.scrollTo(index, anchor: .center)
-                }
+                guard canAutoScrollToCurrentSubtitle else { return }
+                scrollToCurrentSubtitle(with: proxy)
             }
+            .onChange(of: isTouchingSubtitleList) {
+                delaySubtitleAutoScroll()
+            }
+            .task(id: subtitleInteractionToken) {
+                await scrollToCurrentSubtitleAfterIdle(with: proxy)
+            }
+        }
+    }
+
+    private var canAutoScrollToCurrentSubtitle: Bool {
+        !isTouchingSubtitleList && Date() >= subtitleAutoScrollResumeAt
+    }
+
+    private func delaySubtitleAutoScroll() {
+        subtitleAutoScrollResumeAt = Date().addingTimeInterval(3)
+        subtitleInteractionToken += 1
+    }
+
+    private func scrollToCurrentSubtitleAfterIdle(with proxy: ScrollViewProxy) async {
+        guard subtitleInteractionToken > 0 else { return }
+        let delay = max(subtitleAutoScrollResumeAt.timeIntervalSinceNow, 0)
+        if delay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+        guard !Task.isCancelled, canAutoScrollToCurrentSubtitle else { return }
+        scrollToCurrentSubtitle(with: proxy)
+    }
+
+    private func scrollToCurrentSubtitle(with proxy: ScrollViewProxy) {
+        guard let index = player.currentSubtitleIndex else { return }
+        withAnimation(.easeOut(duration: 0.25)) {
+            proxy.scrollTo(index, anchor: .center)
         }
     }
 }
