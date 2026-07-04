@@ -8,6 +8,7 @@ struct WorkDetailView: View {
     let client: ASMRClient
     @ObservedObject var auth: AuthSession
     let player: WorkAudioPlayer
+    let reservesMiniPlayerSpace: Bool
     let onSearch: (String, String) -> Void
     let onLoginRequired: () -> Void
 
@@ -53,6 +54,10 @@ struct WorkDetailView: View {
                                 isPathMenuExpanded: $isPathMenuExpanded,
                                 player: player
                             )
+                        }
+
+                        if reservesMiniPlayerSpace {
+                            MiniPlayerLayout.contentSpacer
                         }
                     }
                     .padding()

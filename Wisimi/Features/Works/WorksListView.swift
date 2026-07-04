@@ -88,6 +88,10 @@ struct WorksListView: View {
                                 }
                             }
                         }
+
+                        if shouldShowMiniPlayer {
+                            MiniPlayerLayout.contentSpacer
+                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -143,6 +147,7 @@ struct WorksListView: View {
                         client: client,
                         auth: auth,
                         player: player,
+                        reservesMiniPlayerSpace: shouldShowMiniPlayer,
                         onSearch: search,
                         onLoginRequired: { isLoginPresented = true }
                     )
@@ -1077,6 +1082,14 @@ private struct TTSMixSettingsSheet: View {
 
     private var speechRateText: String {
         "\(String(format: "%.2f", settings.maxSpeechRate))x"
+    }
+}
+
+enum MiniPlayerLayout {
+    static let contentAvoidanceHeight: CGFloat = 70
+
+    static var contentSpacer: some View {
+        Color.clear.frame(height: contentAvoidanceHeight)
     }
 }
 
