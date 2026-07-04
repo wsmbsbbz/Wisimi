@@ -31,6 +31,10 @@ asmr.one 的 Web 版在移动端已经能用，但我想在它的内容基础上
 
 打开 `Wisimi.xcodeproj` 后运行 `wisimi` target。
 
+## 发布
+
+推送 `v*` tag 或手动运行 `iOS Release` GitHub Actions workflow 会生成未签名 `.ipa` 并上传到 GitHub Release。该 `.ipa` 不能直接安装，用户必须自行签名后侧载。
+
 ## 还没做
 
 - 更完整的播放器队列管理

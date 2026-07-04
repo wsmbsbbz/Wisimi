@@ -1,0 +1,58 @@
+name: iOS Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+
+      - name: Resolve tag
+        run: echo "RELEASE_TAG=${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}" >> "$GITHUB_ENV"
+
+      - name: Build unsigned app
+        run: |
+          xcodebuild build \
+            -project Wisimi.xcodeproj \
+            -scheme wisimi \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package unsigned ipa
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/Wisimi.app"
+          test -d "$APP_PATH"
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          (cd build && ditto -c -k --norsrc --keepParent Payload "Wisimi-${RELEASE_TAG}-unsigned.ipa")
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IPA="build/Wisimi-${RELEASE_TAG}-unsigned.ipa"
+          NOTES="Unsigned IPA. You must sign it yourself before sideloading."
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes "$NOTES"
+          gh release edit "$RELEASE_TAG" --notes "$NOTES"
+          gh release upload "$RELEASE_TAG" "$IPA" --clobber
