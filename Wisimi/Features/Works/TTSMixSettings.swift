@@ -29,7 +29,7 @@ final class TTSMixSettings: ObservableObject {
         }
     }
 
-    private static let enabledKey = "TTSMixSettings.isEnabled"
+    private static let enabledKey = "TTSMixSettings.isMixEnabled"
     private static let volumeKey = "TTSMixSettings.volume"
     private static let maxSpeechRateKey = "TTSMixSettings.maxSpeechRate"
     private let defaults: UserDefaults
