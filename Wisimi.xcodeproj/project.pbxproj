@@ -11,12 +11,12 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		000000000000000100000010 /* Exceptions for "Wisimi" folder in "wisimi" target */ = {
+		000000000000000100000010 /* Exceptions for "Wisimi" folder in "Wisimi" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 000000000000000100000000 /* wisimi */;
+			target = 000000000000000100000000 /* Wisimi */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -24,7 +24,7 @@
 		000000000000000000000010 /* Wisimi */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				000000000000000100000010 /* Exceptions for "Wisimi" folder in "wisimi" target */,
+				000000000000000100000010 /* Exceptions for "Wisimi" folder in "Wisimi" target */,
 			);
 			path = Wisimi;
 			sourceTree = "<group>";
@@ -59,9 +59,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		000000000000000100000000 /* wisimi */ = {
+		000000000000000100000000 /* Wisimi */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "wisimi" */;
+			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "Wisimi" */;
 			buildPhases = (
 				000000000000000120000000 /* Sources */,
 				000000000000000130000000 /* Frameworks */,
@@ -72,7 +72,7 @@
 			fileSystemSynchronizedGroups = (
 				000000000000000000000010 /* Wisimi */,
 			);
-			name = wisimi;
+			name = Wisimi;
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Wisimi.app */;
 			productType = "com.apple.product-type.application";
@@ -106,7 +106,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				000000000000000100000000 /* wisimi */,
+				000000000000000100000000 /* Wisimi */,
 			);
 		};
 /* End PBXProject section */
@@ -260,7 +260,7 @@
 			};
 			name = Release;
 		};
-		000000000000000111000000 /* Debug configuration for PBXNativeTarget "wisimi" */ = {
+		000000000000000111000000 /* Debug configuration for PBXNativeTarget "Wisimi" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -291,7 +291,7 @@
 			};
 			name = Debug;
 		};
-		000000000000000112000000 /* Release configuration for PBXNativeTarget "wisimi" */ = {
+		000000000000000112000000 /* Release configuration for PBXNativeTarget "Wisimi" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -333,11 +333,11 @@
 			);
 			defaultConfigurationName = Release;
 		};
-		000000000000000110000000 /* Build configuration list for PBXNativeTarget "wisimi" */ = {
+		000000000000000110000000 /* Build configuration list for PBXNativeTarget "Wisimi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000111000000 /* Debug configuration for PBXNativeTarget "wisimi" */,
-				000000000000000112000000 /* Release configuration for PBXNativeTarget "wisimi" */,
+				000000000000000111000000 /* Debug configuration for PBXNativeTarget "Wisimi" */,
+				000000000000000112000000 /* Release configuration for PBXNativeTarget "Wisimi" */,
 			);
 			defaultConfigurationName = Release;
 		};

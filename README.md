@@ -1,17 +1,14 @@
 # Wisimi
 
-Wisimi 是一个用 SwiftUI 实现的 asmr.one iOS 客户端。
+Wisimi 是一个用 SwiftUI 实现的非官方 asmr.one iOS 客户端。
 
-## 为什么有此项目
+asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容基础上提供更贴近移动端和个人使用习惯的体验。
 
-asmr.one 的 Web 版在移动端已经能用，但我想在它的内容基础上做一些更贴近个人使用习惯的功能：
+## Features
 
 - 播放有字幕的作品时，用中文 TTS 叠加旁白（是的，我不懂日语）
 - 按自己的收藏、标记和播放列表来整理作品
 - 使用 asmr.one 的推荐接口获取个性化推荐
-
-## 目前支持
-
 - 查看最新作品、热门作品、收藏、播放列表和推荐作品
 - 搜索作品、标签、声优、社团和 RJ 号
 - 按字幕、排序字段和排序方向筛选作品
@@ -23,21 +20,46 @@ asmr.one 的 Web 版在移动端已经能用，但我想在它的内容基础上
 - 标记作品状态：想听、在听、听过、重听、搁置
 - 创建、编辑、删除播放列表，并把作品加入或移出播放列表
 
-## 开发
+## Requirements
 
-- Xcode 27
+- Xcode 26.3 或更新版本
 - SwiftUI
 - iOS 27.0+
 
-打开 `Wisimi.xcodeproj` 后运行 `wisimi` target。
+## Build
 
-## 发布
+打开 `Wisimi.xcodeproj`，选择 `Wisimi` scheme/target 后运行。
 
-推送 `v*` tag 或手动运行 `iOS Release` GitHub Actions workflow 会生成未签名 `.ipa` 并上传到 GitHub Release。该 `.ipa` 不能直接安装，用户必须自行签名后侧载。
+也可以用命令行构建：
 
-## 还没做
+```sh
+xcodebuild -project Wisimi.xcodeproj -scheme Wisimi -configuration Debug -sdk iphonesimulator build
+```
+
+## Release
+
+推送 `v*` tag 或手动运行 `iOS Release` GitHub Actions workflow 会生成未签名 `.ipa` 并上传到 GitHub Release。
+
+该 `.ipa` 不能直接安装，用户必须自行签名后侧载。
+
+## Privacy and Data
+
+- Wisimi 会直接请求 asmr.one 相关接口，作品数据来自 asmr.one。
+- 登录后的 token 只保存在本机 Keychain 中，不会提交到仓库，也不会由 Wisimi 上传到其他服务。
+- 播放进度、TTS 设置和 TTS 临时缓存保存在本机。
+
+## Third-party Services
+
+- Wisimi 是非官方客户端，不隶属于 asmr.one。
+- 在线 TTS 功能依赖 Microsoft Edge Read Aloud 使用的在线语音服务。该服务可能变更、限流、失效，使用时也应遵守对应服务条款。
+
+## Roadmap
 
 - 更完整的播放器队列管理
 - TTS 声音、语言和缓存管理
 - 更细的错误提示和重试体验
 - 面向不同 iOS 设备尺寸的持续 UI 打磨
+
+## License
+
+MIT

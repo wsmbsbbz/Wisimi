@@ -30,7 +30,7 @@ jobs:
         run: |
           xcodebuild build \
             -project Wisimi.xcodeproj \
-            -scheme wisimi \
+            -scheme Wisimi \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build/DerivedData \
