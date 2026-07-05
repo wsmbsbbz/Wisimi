@@ -104,10 +104,8 @@ struct WorkSummary: Decodable, Identifiable {
     var thumbnailCoverURL: URL? { thumbnailCover.flatMap(URL.init(string:)) }
     var ratingText: String { rateAverage.map { String(format: "%.1f", $0) } ?? "-" }
     var durationText: String { duration.formattedDuration }
-    var voiceActorsText: String { vas.map(\.name).joined(separator: " / ") }
     var visibleVoiceActors: [String] { vas.prefix(2).map(\.name) }
     var hiddenVoiceActorCount: Int { max(vas.count - visibleVoiceActors.count, 0) }
-    var visibleTags: [String] { tags.map(\.name) }
 
     private enum CodingKeys: String, CodingKey {
         case id

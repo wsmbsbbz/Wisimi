@@ -179,66 +179,50 @@ struct ASMRClient {
     }
 
     func fetchText(_ url: URL) async throws -> String {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
-            throw ASMRClientError.badResponse
-        }
+        let data = try await data(for: request(url: url))
         return String(decoding: data, as: UTF8.self)
     }
 
     private func fetch<T: Decodable>(_ url: URL, token: String? = nil) async throws -> T {
-        var request = URLRequest(url: url)
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
-            throw ASMRClientError.badResponse
-        }
+        let data = try await data(for: request(url: url, token: token))
         return try decoder.decode(T.self, from: data)
     }
 
     private func postJSON<T: Decodable, Body: Encodable>(_ url: URL, body: Body, token: String? = nil) async throws -> T {
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
-            throw ASMRClientError.badResponse
-        }
+        let data = try await data(for: request(url: url, method: "POST", body: body, token: token))
         return try decoder.decode(T.self, from: data)
     }
 
     private func send(_ url: URL, method: String, token: String? = nil) async throws {
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
-            throw ASMRClientError.badResponse
-        }
+        _ = try await data(for: request(url: url, method: method, token: token))
     }
 
     private func sendJSON<Body: Encodable>(_ url: URL, method: String, body: Body, token: String? = nil) async throws {
+        _ = try await data(for: request(url: url, method: method, body: body, token: token))
+    }
+
+    private func request(url: URL, method: String = "GET", token: String? = nil) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        request.httpBody = try JSONEncoder().encode(body)
+        return request
+    }
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+    private func request<Body: Encodable>(url: URL, method: String, body: Body, token: String? = nil) throws -> URLRequest {
+        var request = request(url: url, method: method, token: token)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        return request
+    }
+
+    private func data(for request: URLRequest) async throws -> Data {
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
             throw ASMRClientError.badResponse
         }
+        return data
     }
 }
 

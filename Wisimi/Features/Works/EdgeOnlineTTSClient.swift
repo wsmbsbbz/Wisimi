@@ -97,7 +97,7 @@ final class EdgeOnlineTTSClient {
     }
 
     fileprivate static func ssmlRate(for speechRate: Double) -> Int {
-        Int(((speechRate - 1) * 100).rounded()).clamped(to: 0...25)
+        min(max(Int(((speechRate - 1) * 100).rounded()), 0), 25)
     }
 
     fileprivate static func ssmlMessage(requestID: String, text: String, speechRate: Double) -> String {
@@ -119,27 +119,24 @@ final class EdgeOnlineTTSClient {
     }
 
     fileprivate static func audioPayload(from frame: Data) -> Data? {
-        let bytes = [UInt8](frame)
-        if bytes.count > 2 {
-            let headerLength = Int(bytes[0]) * 256 + Int(bytes[1])
+        if frame.count > 2 {
+            let headerLength = Int(frame[frame.startIndex]) * 256 + Int(frame[frame.index(after: frame.startIndex)])
             let payloadStart = headerLength + 2
-            if headerLength > 0, payloadStart <= bytes.count {
-                let header = String(decoding: bytes[2..<payloadStart], as: UTF8.self)
+            if headerLength > 0, payloadStart <= frame.count {
+                let headerStart = frame.index(frame.startIndex, offsetBy: 2)
+                let headerEnd = frame.index(frame.startIndex, offsetBy: payloadStart)
+                let header = String(decoding: frame[headerStart..<headerEnd], as: UTF8.self)
                 if header.contains("Path:audio") {
-                    return Data(bytes[payloadStart...])
+                    return Data(frame[headerEnd...])
                 }
             }
         }
 
-        let separator: [UInt8] = [13, 10, 13, 10]
-        guard bytes.count >= separator.count else { return nil }
-        for index in 0...(bytes.count - separator.count) {
-            guard Array(bytes[index..<(index + separator.count)]) == separator else { continue }
-            let header = String(decoding: bytes[..<index], as: UTF8.self)
-            guard header.contains("Path:audio") else { return nil }
-            return Data(bytes[(index + separator.count)...])
-        }
-        return nil
+        let separator = Data("\r\n\r\n".utf8)
+        guard let separatorRange = frame.range(of: separator) else { return nil }
+        let header = String(decoding: frame[..<separatorRange.lowerBound], as: UTF8.self)
+        guard header.contains("Path:audio") else { return nil }
+        return Data(frame[separatorRange.upperBound...])
     }
 
     static func cacheURL(for text: String, speechRate: Double) -> URL {
@@ -197,12 +194,6 @@ enum EdgeOnlineTTSError: LocalizedError {
 private extension Digest {
     var hexString: String {
         map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 

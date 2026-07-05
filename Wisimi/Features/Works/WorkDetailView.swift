@@ -57,7 +57,7 @@ struct WorkDetailView: View {
                         }
 
                         if reservesMiniPlayerSpace {
-                            MiniPlayerLayout.contentSpacer
+                            Color.clear.frame(height: miniPlayerAvoidanceHeight)
                         }
                     }
                     .padding()

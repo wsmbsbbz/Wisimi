@@ -11,7 +11,12 @@ struct WorkRow: View {
         let contentWidth = max(width - 20, 0)
 
         VStack(alignment: .leading, spacing: 0) {
-            WorkCardCover(url: work.thumbnailCoverURL, width: width)
+            CoverImage(
+                url: work.thumbnailCoverURL,
+                cornerRadius: 0,
+                size: CGSize(width: width, height: width * 3 / 4),
+                contentMode: .fit
+            )
 
             VStack(alignment: .leading, spacing: 12) {
                 TitleBlock(work: work)
@@ -28,31 +33,6 @@ struct WorkRow: View {
         }
         .clipShape(.rect(cornerRadius: 16))
         .accessibilityElement(children: .combine)
-    }
-}
-
-private struct WorkCardCover: View {
-    let url: URL?
-    let width: CGFloat
-
-    var body: some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFit()
-            case .failure:
-                Image(systemName: "photo")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-            default:
-                ProgressView()
-            }
-        }
-        .frame(width: width, height: width * 3 / 4)
-        .background(.quaternary)
-        .clipped()
     }
 }
 
@@ -108,18 +88,7 @@ struct VoiceActorChip: View {
     let text: String
 
     var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .foregroundStyle(.green)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(.green.opacity(0.12), in: .capsule)
-            .overlay {
-                Capsule()
-                    .stroke(.green.opacity(0.25), lineWidth: 1)
-            }
+        TextChip(text: text, tint: .green, weight: .semibold)
     }
 }
 
@@ -127,18 +96,7 @@ struct CircleChip: View {
     let text: String
 
     var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .foregroundStyle(.blue)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(.blue.opacity(0.12), in: .capsule)
-            .overlay {
-                Capsule()
-                    .stroke(.blue.opacity(0.25), lineWidth: 1)
-            }
+        TextChip(text: text, tint: .blue, weight: .semibold)
     }
 }
 
@@ -146,18 +104,41 @@ struct TagChip: View {
     let text: String
 
     var body: some View {
+        TextChip(text: text)
+    }
+}
+
+private struct TextChip: View {
+    let text: String
+    var tint: Color?
+    var weight: Font.Weight = .medium
+
+    var body: some View {
+        if let tint {
+            label
+                .foregroundStyle(tint)
+                .background(tint.opacity(0.12), in: .capsule)
+                .overlay {
+                    Capsule()
+                        .stroke(tint.opacity(0.25), lineWidth: 1)
+                }
+        } else {
+            label
+                .background(.regularMaterial, in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.quaternary, lineWidth: 1)
+                }
+        }
+    }
+
+    private var label: some View {
         Text(text)
-            .font(.caption.weight(.medium))
+            .font(.caption.weight(weight))
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(.regularMaterial)
-            .clipShape(.rect(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.quaternary, lineWidth: 1)
-            }
     }
 }
 

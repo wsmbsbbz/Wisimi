@@ -90,7 +90,7 @@ struct WorksListView: View {
                         }
 
                         if shouldShowMiniPlayer {
-                            MiniPlayerLayout.contentSpacer
+                            Color.clear.frame(height: miniPlayerAvoidanceHeight)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -750,15 +750,13 @@ private struct WorksFilterSheet: View {
                     apply(playlist, from: editor)
                 }
             }
-            .sheet(item: $playlistActions) { playlist in
-                PlaylistActionsSheet(playlist: playlist) {
-                    playlistActions = nil
+            .confirmationDialog("管理播放列表", item: $playlistActions) { playlist in
+                Button("编辑") {
                     playlistEditor = .edit(playlist)
-                } onDelete: {
-                    playlistActions = nil
+                }
+                Button("删除", role: .destructive) {
                     playlistToDelete = playlist
                 }
-                    .presentationDetents([.height(220)])
             }
             .confirmationDialog("删除播放列表？", isPresented: deleteConfirmation) {
                 Button("删除", role: .destructive) {
@@ -820,43 +818,6 @@ private struct WorksFilterSheet: View {
             mutationMessage = error.localizedDescription
         }
         isDeleting = false
-    }
-}
-
-private struct PlaylistActionsSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let playlist: PlaylistSummary
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Button {
-                        dismiss()
-                        onEdit()
-                    } label: {
-                        Label("编辑", systemImage: "pencil")
-                    }
-
-                    Button(role: .destructive) {
-                        dismiss()
-                        onDelete()
-                    } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                }
-            }
-            .navigationTitle(playlist.displayName)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        dismiss()
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1085,13 +1046,7 @@ private struct TTSMixSettingsSheet: View {
     }
 }
 
-enum MiniPlayerLayout {
-    static let contentAvoidanceHeight: CGFloat = 70
-
-    static var contentSpacer: some View {
-        Color.clear.frame(height: contentAvoidanceHeight)
-    }
-}
+let miniPlayerAvoidanceHeight: CGFloat = 70
 
 private struct MiniPlayerBar: View {
     @ObservedObject var player: WorkAudioPlayer
