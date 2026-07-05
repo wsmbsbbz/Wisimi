@@ -195,6 +195,10 @@ struct TrackNode: Decodable, Identifiable {
     var audioURL: URL? {
         (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
     }
+    var imagePreviewURL: URL? {
+        guard isImage else { return nil }
+        return (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
+    }
     var downloadURL: URL? { mediaDownloadUrl.flatMap(URL.init(string:)) }
     var durationText: String { duration.formattedDuration }
 }
@@ -234,7 +238,7 @@ enum DecodeSelfCheck {
         let playlistWorks = #"{"works":[{"id":1172778,"title":"Work","name":"Circle","duration":11539,"rate_average_2dp":4.85,"has_subtitle":false,"thumbnailCoverUrl":"https://example.com/cover.jpg","tags":[{"id":68,"name":"淫语"}],"vas":[{"id":"va","name":"天知遥"}]}],"pagination":{"page":1,"pageSize":12,"totalCount":1}}"#
         let playlists = #"{"playlists":[{"id":"playlist-id","name":"Playlist","privacy":0,"description":"probe","works_count":1,"exist":true}],"pagination":{"page":1,"pageSize":12,"totalCount":1}}"#
         let detail = #"{"id":1,"title":"Work","name":"Circle","duration":90,"dl_count":2,"rate_average_2dp":4.8,"has_subtitle":true,"mainCoverUrl":"https://example.com/a.jpg","progress":"marked","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}"#
-        let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4,"mediaDownloadUrl":"https://example.com/01.mp3"},{"type":"text","title":"01.vtt","mediaDownloadUrl":"https://example.com/01.vtt"},{"type":"image","title":"cover.jpg"}]}]"#
+        let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4,"mediaDownloadUrl":"https://example.com/01.mp3"},{"type":"text","title":"01.vtt","mediaDownloadUrl":"https://example.com/01.vtt"},{"type":"image","title":"cover.jpg","mediaDownloadUrl":"https://example.com/cover.jpg"}]}]"#
 
         let worksResponse = try? decoder.decode(WorksResponse.self, from: Data(list.utf8))
         assert(worksResponse?.works.count == 1)
@@ -256,6 +260,7 @@ enum DecodeSelfCheck {
         assert(decodedTracks?.defaultDirectoryPath.first?.children?.first?.isAudio == true)
         assert(decodedTracks?.defaultDirectoryPath.first?.children?[1].isSubtitle == true)
         assert(decodedTracks?.defaultDirectoryPath.first?.children?[2].isImage == true)
+        assert(decodedTracks?.defaultDirectoryPath.first?.children?[2].imagePreviewURL?.absoluteString == "https://example.com/cover.jpg")
     }
 }
 #endif

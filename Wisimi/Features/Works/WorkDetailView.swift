@@ -163,6 +163,7 @@ private struct TrackBrowserView: View {
     @Binding var currentPath: [TrackNode]
     @Binding var isPathMenuExpanded: Bool
     let player: WorkAudioPlayer
+    @State private var imagePreview: TrackImagePreview?
 
     private var isSingleRootFolder: Bool {
         tracks.count == 1 && tracks[0].isFolder
@@ -218,12 +219,19 @@ private struct TrackBrowserView: View {
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(itemRows) { item in
-                        TrackBrowserNode(item: item, openFolder: openFolder) { node in
+                        TrackBrowserNode(
+                            item: item,
+                            openFolder: openFolder,
+                            previewImage: previewImage
+                        ) { node in
                             player.play(queue: playableItems, start: node, siblings: currentItems, work: work)
                         }
                     }
                 }
             }
+        }
+        .sheet(item: $imagePreview) { preview in
+            ImagePreviewSheet(preview: preview)
         }
     }
 
@@ -286,6 +294,11 @@ private struct TrackBrowserView: View {
         isPathMenuExpanded = false
     }
 
+    private func previewImage(_ item: TrackDisplayItem) {
+        guard let url = item.node.imagePreviewURL else { return }
+        imagePreview = TrackImagePreview(id: item.id, title: item.node.title, url: url)
+    }
+
     private func pathID(through index: Int) -> String {
         currentPath.prefix(index + 1).enumerated().map { "\($0.offset)-\($0.element.id)" }.joined(separator: "/")
     }
@@ -294,6 +307,7 @@ private struct TrackBrowserView: View {
 private struct TrackBrowserNode: View {
     let item: TrackDisplayItem
     let openFolder: (TrackNode) -> Void
+    let previewImage: (TrackDisplayItem) -> Void
     let playAudio: (TrackNode) -> Void
 
     var body: some View {
@@ -311,11 +325,180 @@ private struct TrackBrowserNode: View {
                 TrackNodeRow(track: item.node)
             }
             .buttonStyle(.plain)
+        } else if item.node.imagePreviewURL != nil {
+            Button {
+                previewImage(item)
+            } label: {
+                TrackNodeRow(track: item.node)
+            }
+            .buttonStyle(.plain)
         } else {
             TrackNodeRow(track: item.node)
         }
     }
 
+}
+
+private struct ImagePreviewSheet: View {
+    let preview: TrackImagePreview
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                ZoomableRemoteImage(url: preview.url)
+                .padding()
+            }
+            .navigationTitle(preview.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ZoomableRemoteImage: View {
+    let url: URL
+    @State private var image: UIImage?
+    @State private var didFail = false
+
+    var body: some View {
+        Group {
+            if let image {
+                ZoomableImage(image: image)
+            } else if didFail {
+                Image(systemName: "photo")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+                    .tint(.white)
+            }
+        }
+        .task(id: url) {
+            await load()
+        }
+    }
+
+    private func load() async {
+        image = nil
+        didFail = false
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let loadedImage = UIImage(data: data) else {
+                didFail = true
+                return
+            }
+            image = loadedImage
+        } catch {
+            didFail = true
+        }
+    }
+}
+
+private struct ZoomableImage: UIViewRepresentable {
+    let image: UIImage
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = ZoomScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 4
+        scrollView.bounces = false
+        scrollView.bouncesZoom = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.backgroundColor = .clear
+
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        scrollView.addSubview(imageView)
+        context.coordinator.imageView = imageView
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.toggleZoom(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+        context.coordinator.scrollView = scrollView
+        scrollView.onLayout = { [weak coordinator = context.coordinator] scrollView in
+            coordinator?.layoutImage(in: scrollView)
+        }
+
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.imageView?.image = image
+        context.coordinator.imageSize = image.size
+        context.coordinator.layoutImage(in: scrollView)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var scrollView: UIScrollView?
+        weak var imageView: UIImageView?
+        var imageSize: CGSize = .zero
+        private var lastImageSize: CGSize = .zero
+        private var lastBoundsSize: CGSize = .zero
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            imageView
+        }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerImage(in: scrollView)
+        }
+
+        func layoutImage(in scrollView: UIScrollView) {
+            guard imageSize.width > 0, imageSize.height > 0, scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
+            guard imageSize != lastImageSize || scrollView.bounds.size != lastBoundsSize else { return }
+            let scale = min(scrollView.bounds.width / imageSize.width, scrollView.bounds.height / imageSize.height)
+            let fittedSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            imageView?.frame = CGRect(origin: .zero, size: fittedSize)
+            scrollView.contentSize = fittedSize
+            scrollView.zoomScale = 1
+            lastImageSize = imageSize
+            lastBoundsSize = scrollView.bounds.size
+            centerImage(in: scrollView)
+        }
+
+        @objc func toggleZoom(_ recognizer: UITapGestureRecognizer) {
+            guard let scrollView, let imageView else { return }
+            if scrollView.zoomScale > 1 {
+                scrollView.setZoomScale(1, animated: true)
+            } else {
+                let point = recognizer.location(in: imageView)
+                let width = scrollView.bounds.width / 2
+                let height = scrollView.bounds.height / 2
+                scrollView.zoom(to: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height), animated: true)
+            }
+        }
+
+        private func centerImage(in scrollView: UIScrollView) {
+            let horizontalInset = max((scrollView.bounds.width - scrollView.contentSize.width) / 2, 0)
+            let verticalInset = max((scrollView.bounds.height - scrollView.contentSize.height) / 2, 0)
+            scrollView.contentInset = UIEdgeInsets(top: verticalInset, left: horizontalInset, bottom: verticalInset, right: horizontalInset)
+        }
+    }
+
+    final class ZoomScrollView: UIScrollView {
+        var onLayout: ((UIScrollView) -> Void)?
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onLayout?(self)
+        }
+    }
 }
 
 private struct ReviewActionButton: View {
@@ -599,6 +782,12 @@ private struct TrackPathItem: Identifiable {
 private struct TrackDisplayItem: Identifiable {
     let id: String
     let node: TrackNode
+}
+
+private struct TrackImagePreview: Identifiable {
+    let id: String
+    let title: String
+    let url: URL
 }
 
 struct DetailHero: View {
