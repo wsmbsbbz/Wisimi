@@ -73,7 +73,7 @@
 				000000000000000000000010 /* Wisimi */,
 			);
 			name = Wisimi;
-			productName = MyApp;
+			productName = Wisimi;
 			productReference = 000000000000000000000120 /* Wisimi.app */;
 			productType = "com.apple.product-type.application";
 		};
