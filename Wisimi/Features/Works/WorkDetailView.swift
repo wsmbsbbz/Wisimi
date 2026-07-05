@@ -796,8 +796,12 @@ struct DetailHero: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CoverImage(url: work.mainCoverURL, cornerRadius: 18)
-                .aspectRatio(4 / 3, contentMode: .fit)
+            GeometryReader { proxy in
+                CoverImage(
+                    url: work.mainCoverURL,
+                    cornerRadius: 18,
+                    size: CGSize(width: proxy.size.width, height: proxy.size.width * 3 / 4)
+                )
                 .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
                 .overlay(alignment: .bottomLeading) {
                     Text(work.rjCode)
@@ -812,6 +816,8 @@ struct DetailHero: View {
                             }
                         }
                 }
+            }
+            .aspectRatio(4 / 3, contentMode: .fit)
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(work.title)
