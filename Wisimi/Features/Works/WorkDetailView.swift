@@ -544,6 +544,7 @@ private struct ReviewActionButton: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity)
+            .contentShape(.rect)
         }
         .buttonStyle(.bordered)
         .tint(isMarked ? .red : .accentColor)
