@@ -9,6 +9,7 @@ struct WisimiApp: App {
         ASMRClientURLSelfCheck.run()
         AudioPlayerSelfCheck.run()
         WorksNavigationSelfCheck.run()
+        WorksFilterContextSelfCheck.run()
         WorkDetailStateSelfCheck.run()
         TTSMixSettingsSelfCheck.run()
         EdgeOnlineTTSSelfCheck.run()

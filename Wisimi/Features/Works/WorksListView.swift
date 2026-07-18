@@ -157,7 +157,7 @@ struct WorksListView: View {
             }
             .sheet(isPresented: $isFilterPresented) {
                 WorksFilterSheet(
-                    mode: selectedMode,
+                    context: filterContext,
                     filter: filter,
                     reviewFilter: reviewFilter,
                     playlists: playlists,
@@ -273,6 +273,13 @@ struct WorksListView: View {
     private var selectedPlaylist: PlaylistSummary? {
         guard let selectedPlaylistID else { return nil }
         return playlists.first { $0.id == selectedPlaylistID }
+    }
+
+    private var filterContext: WorksFilterContext {
+        WorksFilterContext.resolve(
+            isSearchActive: !activeSearchText.isEmpty,
+            mode: selectedMode
+        )
     }
 
     private func loadWorks(page: Int = 1) async {
@@ -396,6 +403,34 @@ private enum WorksMode: String, CaseIterable, Identifiable {
         case .latest, .popular: false
         case .favorites, .playlists, .recommended: true
         }
+    }
+}
+
+private enum WorksFilterContext: Equatable {
+    case works
+    case favorites
+    case playlists
+
+    static func resolve(isSearchActive: Bool, mode: WorksMode) -> Self {
+        guard !isSearchActive else { return .works }
+
+        return switch mode {
+        case .favorites: .favorites
+        case .playlists: .playlists
+        case .latest, .popular, .recommended: .works
+        }
+    }
+}
+
+enum WorksFilterContextSelfCheck {
+    static func run() {
+        assert(WorksFilterContext.resolve(isSearchActive: true, mode: .favorites) == .works)
+        assert(WorksFilterContext.resolve(isSearchActive: true, mode: .playlists) == .works)
+        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .favorites) == .favorites)
+        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .playlists) == .playlists)
+        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .latest) == .works)
+        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .popular) == .works)
+        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .recommended) == .works)
     }
 }
 
@@ -564,7 +599,7 @@ private struct WorksSearchHeader: View {
 
 private struct WorksFilterSheet: View {
     @Environment(\.dismiss) private var dismiss
-    let mode: WorksMode
+    let context: WorksFilterContext
     @State private var draft: WorksFilter
     @State private var reviewDraft: ReviewFilter
     @State private var playlistID: String?
@@ -584,7 +619,7 @@ private struct WorksFilterSheet: View {
     let onPlaylistDeleted: (String) -> Void
 
     init(
-        mode: WorksMode,
+        context: WorksFilterContext,
         filter: WorksFilter,
         reviewFilter: ReviewFilter,
         playlists: [PlaylistSummary],
@@ -598,7 +633,7 @@ private struct WorksFilterSheet: View {
         onPlaylistUpdated: @escaping (PlaylistSummary) -> Void,
         onPlaylistDeleted: @escaping (String) -> Void
     ) {
-        self.mode = mode
+        self.context = context
         _draft = State(initialValue: filter)
         _reviewDraft = State(initialValue: reviewFilter)
         _playlistID = State(initialValue: selectedPlaylistID ?? playlists.first?.id)
@@ -616,7 +651,7 @@ private struct WorksFilterSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if mode == .favorites {
+                if context == .favorites {
                     Section("状态") {
                         Picker("", selection: $reviewDraft.status) {
                             ForEach(ReviewStatus.allCases) { status in
@@ -641,7 +676,7 @@ private struct WorksFilterSheet: View {
                         }
                         .pickerStyle(.segmented)
                     }
-                } else if mode == .playlists {
+                } else if context == .playlists {
                     Section("播放列表") {
                         if managedPlaylists.isEmpty {
                             Text("暂无播放列表")
@@ -731,9 +766,9 @@ private struct WorksFilterSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("重置") {
-                        if mode == .favorites {
+                        if context == .favorites {
                             reviewDraft = .default
-                        } else if mode == .playlists {
+                        } else if context == .playlists {
                             playlistID = managedPlaylists.first?.id
                         } else {
                             draft = .default
@@ -742,9 +777,9 @@ private struct WorksFilterSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("应用") {
-                        if mode == .favorites {
+                        if context == .favorites {
                             onApplyReviewFilter(reviewDraft)
-                        } else if mode == .playlists {
+                        } else if context == .playlists {
                             if let playlistID {
                                 onApplyPlaylist(playlistID)
                             }
