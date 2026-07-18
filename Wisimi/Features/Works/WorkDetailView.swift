@@ -1,6 +1,90 @@
 import SwiftUI
+import Observation
 #if canImport(UIKit)
 import UIKit
+#endif
+
+@MainActor
+@Observable
+final class WorkDetailPageState {
+    private(set) var loadedWorkID: Int?
+    var work: WorkDetail?
+    var tracks: [TrackNode] = []
+    var currentPath: [TrackNode] = []
+    var isPathMenuExpanded = false
+    private(set) var isLoading = false
+    private(set) var errorMessage: String?
+
+    static func shouldLoad(requestedWorkID: Int, loadedWorkID: Int?, hasWork: Bool, force: Bool) -> Bool {
+        force || loadedWorkID != requestedWorkID || !hasWork
+    }
+
+    func beginLoading(workID: Int, force: Bool) -> Bool {
+        guard !isLoading else { return false }
+        guard Self.shouldLoad(
+            requestedWorkID: workID,
+            loadedWorkID: loadedWorkID,
+            hasWork: work != nil,
+            force: force
+        ) else { return false }
+
+        isLoading = true
+        errorMessage = nil
+        return true
+    }
+
+    func finishLoading(work: WorkDetail, tracks: [TrackNode], workID: Int) {
+        let previousPathIDs = loadedWorkID == workID && self.work != nil ? currentPath.map(\.id) : nil
+
+        self.work = work
+        self.tracks = tracks
+        if let previousPathIDs {
+            currentPath = tracks.resolvingDirectoryPath(ids: previousPathIDs) ?? tracks.defaultDirectoryPath
+        } else {
+            currentPath = tracks.defaultDirectoryPath
+            isPathMenuExpanded = false
+        }
+        loadedWorkID = workID
+        isLoading = false
+        errorMessage = nil
+    }
+
+    func finishLoading(with error: Error) {
+        isLoading = false
+        errorMessage = error.localizedDescription
+    }
+}
+
+extension Array where Element == TrackNode {
+    func resolvingDirectoryPath(ids: [TrackNode.ID]) -> [TrackNode]? {
+        guard !ids.isEmpty else { return [] }
+
+        var siblings = self
+        var resolvedPath: [TrackNode] = []
+        for id in ids {
+            guard let folder = siblings.first(where: { $0.id == id && $0.isFolder }) else { return nil }
+            resolvedPath.append(folder)
+            siblings = folder.children ?? []
+        }
+        return resolvedPath
+    }
+}
+
+#if DEBUG
+enum WorkDetailStateSelfCheck {
+    static func run() {
+        assert(WorkDetailPageState.shouldLoad(requestedWorkID: 1, loadedWorkID: nil, hasWork: false, force: false))
+        assert(!WorkDetailPageState.shouldLoad(requestedWorkID: 1, loadedWorkID: 1, hasWork: true, force: false))
+        assert(WorkDetailPageState.shouldLoad(requestedWorkID: 1, loadedWorkID: 1, hasWork: true, force: true))
+        assert(WorkDetailPageState.shouldLoad(requestedWorkID: 2, loadedWorkID: 1, hasWork: true, force: false))
+
+        let json = #"[{"type":"folder","title":"root","children":[{"type":"folder","title":"chapter","children":[{"type":"audio","title":"01.mp3","hash":"track-1"}]}]}]"#
+        let tracks = try? JSONDecoder().decode([TrackNode].self, from: Data(json.utf8))
+        let restored = tracks?.resolvingDirectoryPath(ids: ["folder-root", "folder-chapter"])
+        assert(restored?.map(\.title) == ["root", "chapter"])
+        assert(tracks?.resolvingDirectoryPath(ids: ["folder-root", "folder-missing"]) == nil)
+    }
+}
 #endif
 
 struct WorkDetailView: View {
@@ -12,24 +96,22 @@ struct WorkDetailView: View {
     let onSearch: (String, String) -> Void
     let onLoginRequired: () -> Void
 
-    @State private var work: WorkDetail?
-    @State private var tracks: [TrackNode] = []
-    @State private var currentPath: [TrackNode] = []
-    @State private var isPathMenuExpanded = false
-    @State private var isLoading = false
+    @State private var pageState = WorkDetailPageState()
+    @State private var scrollPosition = ScrollPosition()
     @State private var isUpdatingMark = false
     @State private var isMarkMenuPresented = false
     @State private var isPlaylistMenuPresented = false
-    @State private var errorMessage: String?
     @State private var markMessage: String?
 
     var body: some View {
         Group {
-            if isLoading && work == nil {
+            if pageState.isLoading && pageState.work == nil {
                 ProgressView("加载详情中...")
-            } else if let errorMessage, work == nil {
-                RetryView(message: errorMessage, retry: loadDetail)
-            } else if let work {
+            } else if let errorMessage = pageState.errorMessage, pageState.work == nil {
+                RetryView(message: errorMessage) {
+                    await loadDetail(force: true)
+                }
+            } else if let work = pageState.work {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         DetailHero(work: work, onSearch: onSearch)
@@ -49,9 +131,9 @@ struct WorkDetailView: View {
                         InfoCard {
                             TrackBrowserView(
                                 work: work,
-                                tracks: tracks,
-                                currentPath: $currentPath,
-                                isPathMenuExpanded: $isPathMenuExpanded,
+                                tracks: pageState.tracks,
+                                currentPath: $pageState.currentPath,
+                                isPathMenuExpanded: $pageState.isPathMenuExpanded,
                                 player: player
                             )
                         }
@@ -62,39 +144,38 @@ struct WorkDetailView: View {
                     }
                     .padding()
                 }
+                .scrollPosition($scrollPosition)
             } else {
-                EmptyStateView(retry: loadDetail)
+                EmptyStateView {
+                    await loadDetail(force: true)
+                }
             }
         }
         .navigationTitle("作品详情")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await loadDetail()
+            await loadDetail(force: false)
         }
         .onChange(of: auth.token) {
-            Task { await loadDetail() }
+            Task { await loadDetail(force: true) }
         }
     }
 
-    private func loadDetail() async {
-        guard !isLoading else { return }
-        isLoading = true
-        errorMessage = nil
+    private func loadDetail(force: Bool) async {
+        guard pageState.beginLoading(workID: workID, force: force) else { return }
         do {
             async let detail = client.fetchWork(id: workID, token: auth.token)
             async let trackList = client.fetchTracks(workID: workID)
-            work = try await detail
-            tracks = try await trackList
-            currentPath = tracks.defaultDirectoryPath
-            isPathMenuExpanded = false
+            let loadedWork = try await detail
+            let loadedTracks = try await trackList
+            pageState.finishLoading(work: loadedWork, tracks: loadedTracks, workID: workID)
         } catch {
-            errorMessage = error.localizedDescription
+            pageState.finishLoading(with: error)
         }
-        isLoading = false
     }
 
     private func toggleMark() {
-        guard let work else { return }
+        guard let work = pageState.work else { return }
         guard let token = auth.token else {
             onLoginRequired()
             return
@@ -110,7 +191,7 @@ struct WorkDetailView: View {
             markMessage = nil
             do {
                 try await client.unmarkWork(id: work.id, token: token)
-                self.work = try await client.fetchWork(id: work.id, token: token)
+                pageState.work = try await client.fetchWork(id: work.id, token: token)
             } catch {
                 markMessage = error.localizedDescription
             }
@@ -119,14 +200,14 @@ struct WorkDetailView: View {
     }
 
     private func mark(_ status: ReviewStatus) {
-        guard let work, let token = auth.token else { return }
+        guard let work = pageState.work, let token = auth.token else { return }
 
         Task {
             isUpdatingMark = true
             markMessage = nil
             do {
                 try await client.markWork(id: work.id, status: status, token: token)
-                self.work = try await client.fetchWork(id: work.id, token: token)
+                pageState.work = try await client.fetchWork(id: work.id, token: token)
             } catch {
                 markMessage = error.localizedDescription
             }

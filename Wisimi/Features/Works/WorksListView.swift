@@ -152,7 +152,7 @@ struct WorksListView: View {
                         onLoginRequired: { isLoginPresented = true }
                     )
                 case .player:
-                    PlayerView(player: player)
+                    PlayerView(player: player, openWorkDetail: openPlayingWorkDetail)
                 }
             }
             .sheet(isPresented: $isFilterPresented) {
@@ -216,17 +216,13 @@ struct WorksListView: View {
         return true
     }
 
-    private func openPlayer(from detailWorkID: Int? = nil) {
-        guard let workID = player.workID else {
-            path.append(.player)
-            return
-        }
+    private func openPlayer() {
+        path.append(.player)
+    }
 
-        if detailWorkID == workID {
-            path.append(.player)
-        } else {
-            path = [.detail(workID), .player]
-        }
+    private func openPlayingWorkDetail() {
+        guard let workID = player.workID else { return }
+        path = WorksRoute.replacingPlayer(withDetail: workID, in: path)
     }
 
     private func runSearch() {
@@ -350,6 +346,20 @@ struct WorksListView: View {
 private enum WorksRoute: Hashable {
     case detail(Int)
     case player
+
+    static func replacingPlayer(withDetail workID: Int, in path: [Self]) -> [Self] {
+        guard path.last == .player else { return path }
+        let previousPath = path.dropLast()
+        return previousPath.last == .detail(workID) ? Array(previousPath) : previousPath + [.detail(workID)]
+    }
+}
+
+enum WorksNavigationSelfCheck {
+    static func run() {
+        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.player]) == [.detail(1)])
+        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.detail(1), .player]) == [.detail(1)])
+        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.detail(2), .player]) == [.detail(2), .detail(1)])
+    }
 }
 
 private enum WorksMode: String, CaseIterable, Identifiable {

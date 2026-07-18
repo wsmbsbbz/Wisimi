@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlayerView: View {
     @ObservedObject var player: WorkAudioPlayer
+    let openWorkDetail: () -> Void
     @State private var isShowingSubtitles = false
 
     var body: some View {
@@ -22,6 +23,13 @@ struct PlayerView: View {
         }
         .navigationTitle("播放器")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: openWorkDetail) {
+                    Label("作品详情", systemImage: "info.circle")
+                }
+            }
+        }
     }
 }
 
