@@ -1,0 +1,38 @@
+name: iOS CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 27
+          xcodebuild -version | grep -q '^Xcode 27\.'
+          xcodebuild -showsdks | grep -Eq 'iphoneos27\.[0-9]+'
+
+      - name: Build unsigned iOS app
+        run: |
+          xcodebuild build \
+            -project Wisimi.xcodeproj \
+            -scheme Wisimi \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""

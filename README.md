@@ -22,7 +22,7 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 
 ## Requirements
 
-- Xcode 26.3 或更新版本
+- macOS 27、Xcode 27 和 iOS 27 SDK
 - SwiftUI
 - iOS 27.0+
 
@@ -38,7 +38,7 @@ xcodebuild -project Wisimi.xcodeproj -scheme Wisimi -configuration Debug -sdk ip
 
 ## Release
 
-推送 `v*` tag 或手动运行 `iOS Release` GitHub Actions workflow 会生成未签名 `.ipa` 并上传到 GitHub Release。
+`main` 分支和 PR 会在 GitHub Actions 的 `xcode-27` runner 上进行无签名 Release 构建。推送形如 `v1.0.0` 的 tag，或手动运行 `iOS Release` 并填写已有 tag，会构建未签名 `.ipa`、验证压缩包内容，并上传到 GitHub Release。
 
 该 `.ipa` 不能直接安装，用户必须自行签名后侧载。
 

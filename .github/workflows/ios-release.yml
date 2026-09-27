@@ -15,16 +15,37 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
-
       - name: Resolve tag
-        run: echo "RELEASE_TAG=${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}" >> "$GITHUB_ENV"
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            release_tag="$REQUESTED_TAG"
+          else
+            release_tag="$GITHUB_REF_NAME"
+          fi
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $release_tag" >&2
+            exit 1
+          fi
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Verify tag and toolchain
+        run: |
+          git fetch --depth=1 origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 27
+          xcodebuild -version | grep -q '^Xcode 27\.'
+          xcodebuild -showsdks | grep -Eq 'iphoneos27\.[0-9]+'
 
       - name: Build unsigned app
         run: |
@@ -33,26 +54,38 @@ jobs:
             -scheme Wisimi \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath build/DerivedData \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
 
       - name: Package unsigned ipa
         run: |
-          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/Wisimi.app"
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/Wisimi.app"
           test -d "$APP_PATH"
-          rm -rf build/Payload
-          mkdir -p build/Payload
-          cp -R "$APP_PATH" build/Payload/
-          (cd build && ditto -c -k --norsrc --keepParent Payload "Wisimi-${RELEASE_TAG}-unsigned.ipa")
+          mkdir -p "$RUNNER_TEMP/release/Payload"
+          ditto "$APP_PATH" "$RUNNER_TEMP/release/Payload/Wisimi.app"
+          (cd "$RUNNER_TEMP/release" && ditto -c -k --norsrc --keepParent Payload "Wisimi-${RELEASE_TAG}-unsigned.ipa")
+          IPA="$RUNNER_TEMP/release/Wisimi-${RELEASE_TAG}-unsigned.ipa"
+          unzip -t "$IPA"
+          unzip -Z1 "$IPA" | grep -Fx 'Payload/Wisimi.app/Wisimi'
+
+      - name: Save build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wisimi-${{ env.RELEASE_TAG }}-unsigned
+          path: ${{ runner.temp }}/release/Wisimi-${{ env.RELEASE_TAG }}-unsigned.ipa
+          if-no-files-found: error
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          IPA="build/Wisimi-${RELEASE_TAG}-unsigned.ipa"
+          IPA="$RUNNER_TEMP/release/Wisimi-${RELEASE_TAG}-unsigned.ipa"
           NOTES="Unsigned IPA. You must sign it yourself before sideloading."
-          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes "$NOTES"
-          gh release edit "$RELEASE_TAG" --notes "$NOTES"
-          gh release upload "$RELEASE_TAG" "$IPA" --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$IPA" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$IPA" --verify-tag --title "$RELEASE_TAG" --notes "$NOTES"
+          fi
