@@ -31,6 +31,10 @@ struct WorksListView: View {
         _ttsSettings = StateObject(wrappedValue: ttsSettings)
         _player = StateObject(wrappedValue: WorkAudioPlayer(client: client, ttsSettings: ttsSettings))
         _auth = StateObject(wrappedValue: AuthSession(client: client))
+        #if DEBUG
+        let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
+        _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
+        #endif
     }
 
     var body: some View {
@@ -195,7 +199,7 @@ struct WorksListView: View {
             }
             .sheet(isPresented: $isNarrationSettingsPresented) {
                 TTSMixSettingsSheet(settings: ttsSettings)
-                    .presentationDetents([.medium])
+                    .presentationDetents([.large])
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -1027,67 +1031,6 @@ private struct PlaylistEditorSheet: View {
             message = error.localizedDescription
         }
         isSaving = false
-    }
-}
-
-private struct TTSMixSettingsSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var settings: TTSMixSettings
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Toggle("开启混音", isOn: $settings.isEnabled)
-                } footer: {
-                    Text("开启后，播放有字幕的作品时会直接请求 Edge 在线 TTS 并叠加旁白。")
-                }
-
-                Section("音量") {
-                    Slider(value: $settings.volume, in: 0...1)
-                        .accessibilityLabel("混音音量")
-                        .accessibilityValue(volumeText)
-
-                    HStack {
-                        Text("TTS 旁白")
-                        Spacer()
-                        Text(volumeText)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                }
-
-                Section("语速") {
-                    Slider(value: $settings.maxSpeechRate, in: 1...1.25, step: 0.05)
-                        .accessibilityLabel("最大语速")
-                        .accessibilityValue(speechRateText)
-
-                    HStack {
-                        Text("最大语速")
-                        Spacer()
-                        Text(speechRateText)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                }
-            }
-            .navigationTitle("混音")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-
-    private var volumeText: String {
-        "\(Int((settings.volume * 100).rounded()))%"
-    }
-
-    private var speechRateText: String {
-        "\(String(format: "%.2f", settings.maxSpeechRate))x"
     }
 }
 

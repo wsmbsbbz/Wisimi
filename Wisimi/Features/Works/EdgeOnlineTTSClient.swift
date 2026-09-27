@@ -140,11 +140,13 @@ final class EdgeOnlineTTSClient {
     }
 
     static func cacheURL(for text: String, speechRate: Double) -> URL {
-        let key = "\(text)|rate:\(String(format: "%.2f", speechRate))"
-        let digest = SHA256.hash(data: Data(key.utf8)).hexString
-        return FileManager.default.temporaryDirectory
-            .appendingPathComponent("wisimi-tts", isDirectory: true)
-            .appendingPathComponent("\(digest).mp3")
+        TTSSynthesisRequest(
+            model: .edge,
+            voiceID: TTSModelID.edge.defaultVoiceID,
+            text: text,
+            speechRate: speechRate,
+            expression: .automatic
+        ).cacheURL
     }
 
     private static func generateSecMSGeC() -> String {
@@ -176,6 +178,31 @@ final class EdgeOnlineTTSClient {
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&apos;")
+    }
+}
+
+final class EdgeTTSProvider: TTSProviderSynthesizing {
+    private let client: EdgeOnlineTTSClient
+
+    init(client: EdgeOnlineTTSClient = EdgeOnlineTTSClient()) {
+        self.client = client
+    }
+
+    func synthesize(_ request: TTSSynthesisRequest, credential: String?, to outputURL: URL) async throws {
+        guard request.model == .edge else { throw TTSSynthesisError.unsupportedConfiguration }
+        if TTSCache.containsValidAudio(at: outputURL) { return }
+        TTSCache.removeIfInvalid(at: outputURL)
+        do {
+            try await client.synthesizeToFile(text: request.text, speechRate: request.speechRate, outputURL: outputURL)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch EdgeOnlineTTSError.timeout {
+            throw TTSSynthesisError.timeout
+        } catch EdgeOnlineTTSError.emptyAudio {
+            throw TTSSynthesisError.emptyAudio
+        } catch {
+            throw TTSSynthesisError.transport
+        }
     }
 }
 

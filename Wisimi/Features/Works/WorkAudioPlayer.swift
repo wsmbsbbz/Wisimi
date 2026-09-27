@@ -23,7 +23,8 @@ final class WorkAudioPlayer: ObservableObject {
 
     private let client: ASMRClient
     private let ttsSettings: TTSMixSettings
-    private let ttsClient = EdgeOnlineTTSClient()
+    private let edgeTTSProvider = EdgeTTSProvider()
+    private let openRouterTTSProvider = OpenRouterTTSClient()
     private let player = AVPlayer()
     private let narrationPlayer = AVPlayer()
     private var siblings: [TrackNode] = []
@@ -44,6 +45,8 @@ final class WorkAudioPlayer: ObservableObject {
     private var shouldPlayAfterActivation = false
     private var lastSavedPosition: TimeInterval = -1
     private var lastNarrationID: String?
+    private var openRouterSession = OpenRouterPlaybackSession()
+    private var shownNarrationNotices: Set<String> = []
 
     init(client: ASMRClient, ttsSettings: TTSMixSettings) {
         self.client = client
@@ -63,19 +66,31 @@ final class WorkAudioPlayer: ObservableObject {
             .store(in: &settingsCancellables)
         ttsSettings.$isEnabled
             .sink { [weak self] isEnabled in
-                guard !isEnabled else { return }
-                self?.stopNarration(clearLast: true)
-                self?.cancelPrefetchTasks()
-                self?.narrationStatuses = [:]
+                guard let self else { return }
+                if isEnabled {
+                    syncNarration()
+                    prefetchUpcomingNarration()
+                } else {
+                    stopNarration(clearLast: true)
+                    cancelPrefetchTasks()
+                    narrationStatuses = [:]
+                }
             }
             .store(in: &settingsCancellables)
-        ttsSettings.$maxSpeechRate
+        Publishers.MergeMany(
+            ttsSettings.$maxSpeechRate.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            ttsSettings.$model.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            ttsSettings.$voiceID.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            ttsSettings.$expressionPreset.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            ttsSettings.$inlineEffectPreset.dropFirst().map { _ in () }.eraseToAnyPublisher()
+        )
+        .sink { [weak self] _ in self?.reloadNarrationConfiguration() }
+        .store(in: &settingsCancellables)
+        ttsSettings.$credentialRevision
+            .dropFirst()
             .sink { [weak self] _ in
-                guard let self else { return }
-                stopNarration(clearLast: true)
-                cancelPrefetchTasks()
-                refreshCachedNarrationStatuses()
-                syncNarration()
+                self?.resetOpenRouterSession()
+                self?.reloadNarrationConfiguration()
             }
             .store(in: &settingsCancellables)
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
@@ -102,6 +117,7 @@ final class WorkAudioPlayer: ObservableObject {
         workTitle = work.title
         circleName = work.name
         coverURL = work.mainCoverURL
+        resetOpenRouterSession()
         loadCurrent(siblings: siblings, autoPlay: true)
     }
 
@@ -134,6 +150,7 @@ final class WorkAudioPlayer: ObservableObject {
         position = target
         updateSubtitle()
         stopNarration(clearLast: true)
+        cancelPrefetchTasks()
         syncNarration()
         updateNowPlaying()
         savePlayback(force: true)
@@ -303,39 +320,36 @@ final class WorkAudioPlayer: ObservableObject {
         let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        let narrationID = "\(currentTrack.id)|\(subtitle.start)|\(text)"
+        let synthesisRequest = ttsSettings.synthesisRequest(text: text)
+        let narrationID = "\(currentTrack.id)|\(subtitle.start)|\(TTSCache.fingerprint(for: synthesisRequest))"
         guard lastNarrationID != narrationID else { return }
         lastNarrationID = narrationID
         stopNarration(clearLast: false)
         prefetchTasks[subtitle.id]?.cancel()
         prefetchTasks[subtitle.id] = nil
 
-        let speechRate = ttsSettings.maxSpeechRate
-        let outputURL = EdgeOnlineTTSClient.cacheURL(for: text, speechRate: speechRate)
         let cutoff = narrationCutoff(forSubtitleAt: currentSubtitleIndex)
-        narrationStatuses[subtitle.id] = FileManager.default.fileExists(atPath: outputURL.path) ? .ready : .generating
-        narrationTask = Task { [ttsClient] in
+        narrationStatuses[subtitle.id] = TTSCache.containsValidAudio(at: synthesisRequest.cacheURL) ? .ready : .generating
+        narrationTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await ttsClient.synthesizeToFile(text: text, speechRate: speechRate, outputURL: outputURL)
+                let outputURL = try await synthesizeWithFallback(synthesisRequest)
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self.narrationStatuses[subtitle.id] = .ready
-                    guard self.ttsSettings.isEnabled,
-                          self.isPlaying,
-                          self.currentNarrationID() == narrationID else { return }
-                    let item = AVPlayerItem(url: outputURL)
-                    self.narrationPlayer.replaceCurrentItem(with: item)
-                    self.narrationPlayer.volume = Float(self.ttsSettings.volume)
-                    self.narrationPlayer.play()
-                    self.scheduleNarrationCutoff(at: cutoff, narrationID: narrationID)
-                }
+                narrationStatuses[subtitle.id] = .ready
+                guard ttsSettings.isEnabled,
+                      isPlaying,
+                      currentNarrationID() == narrationID else { return }
+                let item = AVPlayerItem(url: outputURL)
+                narrationPlayer.replaceCurrentItem(with: item)
+                narrationPlayer.volume = Float(ttsSettings.volume)
+                narrationPlayer.play()
+                scheduleNarrationCutoff(at: cutoff, narrationID: narrationID)
             } catch {
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self.narrationStatuses[subtitle.id] = .failed
-                    guard self.currentNarrationID() == narrationID else { return }
-                    self.lastNarrationID = nil
-                }
+                narrationStatuses[subtitle.id] = .failed
+                guard currentNarrationID() == narrationID else { return }
+                lastNarrationID = nil
+                showNarrationNoticeOnce("旁白生成失败：\(error.localizedDescription)")
             }
         }
     }
@@ -366,29 +380,27 @@ final class WorkAudioPlayer: ObservableObject {
         let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        let speechRate = ttsSettings.maxSpeechRate
-        let outputURL = EdgeOnlineTTSClient.cacheURL(for: text, speechRate: speechRate)
-        if FileManager.default.fileExists(atPath: outputURL.path) {
+        let synthesisRequest = ttsSettings.synthesisRequest(text: text)
+        let outputURL = synthesisRequest.cacheURL
+        if TTSCache.containsValidAudio(at: outputURL) {
             narrationStatuses[subtitle.id] = .ready
             return
         }
+        TTSCache.removeIfInvalid(at: outputURL)
         guard prefetchTasks[subtitle.id] == nil else { return }
 
         narrationStatuses[subtitle.id] = .generating
-        prefetchTasks[subtitle.id] = Task { [ttsClient] in
+        prefetchTasks[subtitle.id] = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await ttsClient.synthesizeToFile(text: text, speechRate: speechRate, outputURL: outputURL)
+                _ = try await synthesizeWithFallback(synthesisRequest)
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self.prefetchTasks[subtitle.id] = nil
-                    self.narrationStatuses[subtitle.id] = .ready
-                }
+                prefetchTasks[subtitle.id] = nil
+                narrationStatuses[subtitle.id] = .ready
             } catch {
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self.prefetchTasks[subtitle.id] = nil
-                    self.narrationStatuses[subtitle.id] = .failed
-                }
+                prefetchTasks[subtitle.id] = nil
+                narrationStatuses[subtitle.id] = .failed
             }
         }
     }
@@ -401,12 +413,14 @@ final class WorkAudioPlayer: ObservableObject {
     }
 
     private func refreshCachedNarrationStatuses() {
-        let speechRate = ttsSettings.maxSpeechRate
         narrationStatuses = Dictionary(uniqueKeysWithValues: subtitles.compactMap { subtitle in
             let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
-            let url = EdgeOnlineTTSClient.cacheURL(for: text, speechRate: speechRate)
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let url = ttsSettings.synthesisRequest(text: text).cacheURL
+            guard TTSCache.containsValidAudio(at: url) else {
+                TTSCache.removeIfInvalid(at: url)
+                return nil
+            }
             return (subtitle.id, TTSGenerationStatus.ready)
         })
     }
@@ -446,7 +460,92 @@ final class WorkAudioPlayer: ObservableObject {
         let subtitle = subtitles[currentSubtitleIndex]
         let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
-        return "\(currentTrack.id)|\(subtitle.start)|\(text)"
+        let request = ttsSettings.synthesisRequest(text: text)
+        return "\(currentTrack.id)|\(subtitle.start)|\(TTSCache.fingerprint(for: request))"
+    }
+
+    private func reloadNarrationConfiguration() {
+        stopNarration(clearLast: true)
+        cancelPrefetchTasks()
+        refreshCachedNarrationStatuses()
+        syncNarration()
+        prefetchUpcomingNarration()
+    }
+
+    private func resetOpenRouterSession() {
+        openRouterSession.reset()
+        shownNarrationNotices = []
+    }
+
+    private func synthesizeWithFallback(_ request: TTSSynthesisRequest) async throws -> URL {
+        if TTSCache.containsValidAudio(at: request.cacheURL) {
+            return request.cacheURL
+        }
+        TTSCache.removeIfInvalid(at: request.cacheURL)
+        if request.model == .edge {
+            try await edgeTTSProvider.synthesize(request, credential: nil, to: request.cacheURL)
+            return request.cacheURL
+        }
+
+        guard let token = ttsSettings.openRouterToken(), !token.isEmpty else {
+            showNarrationNoticeOnce(TTSSynthesisError.missingCredential.localizedDescription)
+            return try await synthesizeWithEdgeFallback(for: request)
+        }
+        guard !openRouterSession.isCircuitOpen else {
+            showNarrationNoticeOnce("OpenRouter 已在本次播放中暂停，旁白将使用 Edge TTS")
+            return try await synthesizeWithEdgeFallback(for: request)
+        }
+
+        var lastError: Error?
+        for attempt in 0..<OpenRouterRetryPolicy.maximumAttempts {
+            do {
+                try await openRouterTTSProvider.synthesize(request, credential: token, to: request.cacheURL)
+                openRouterSession.recordSuccess()
+                return request.cacheURL
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as TTSSynthesisError {
+                lastError = error
+                if error.disablesOpenRouterSession {
+                    openRouterSession.recordFailure(error)
+                    showNarrationNoticeOnce(error.localizedDescription)
+                    break
+                }
+                guard error.isTransient, attempt + 1 < OpenRouterRetryPolicy.maximumAttempts else { break }
+            } catch {
+                lastError = TTSSynthesisError.transport
+                if attempt + 1 == OpenRouterRetryPolicy.maximumAttempts { break }
+            }
+        }
+
+        if let synthesisError = lastError as? TTSSynthesisError, synthesisError.isTransient {
+            openRouterSession.recordFailure(synthesisError)
+            if openRouterSession.isCircuitOpen {
+                showNarrationNoticeOnce("OpenRouter 连续失败，已在本次播放中暂停并使用 Edge TTS")
+            } else {
+                showNarrationNoticeOnce(synthesisError.localizedDescription)
+            }
+        } else if let lastError {
+            showNarrationNoticeOnce(lastError.localizedDescription)
+        }
+        return try await synthesizeWithEdgeFallback(for: request)
+    }
+
+    private func synthesizeWithEdgeFallback(for originalRequest: TTSSynthesisRequest) async throws -> URL {
+        let fallback = TTSSynthesisRequest(
+            model: .edge,
+            voiceID: TTSModelID.edge.defaultVoiceID,
+            text: originalRequest.text,
+            speechRate: originalRequest.speechRate,
+            expression: .automatic
+        )
+        try await edgeTTSProvider.synthesize(fallback, credential: nil, to: fallback.cacheURL)
+        return fallback.cacheURL
+    }
+
+    private func showNarrationNoticeOnce(_ message: String) {
+        guard shownNarrationNotices.insert(message).inserted else { return }
+        ttsSettings.runtimeNotice = message
     }
 
     private func activateAudioSession(then action: @escaping @MainActor (Bool) -> Void) {

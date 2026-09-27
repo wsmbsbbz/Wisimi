@@ -9,3 +9,7 @@
 ## 布局
 
 应考虑主流不同型号的 iOS 设备、不能只依赖单一型号的屏幕分辨率进行 UI 布局
+
+## OpenSpec
+
+所有 OpenSpec change 的 proposal、design、specs 和 tasks 均应使用中文描述。OpenSpec 语法要求的固定关键字、模型 ID、API 路径、代码标识符及其他不应翻译的技术名称保留原文。

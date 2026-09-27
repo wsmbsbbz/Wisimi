@@ -12,7 +12,10 @@ struct WisimiApp: App {
         WorksFilterContextSelfCheck.run()
         WorkDetailStateSelfCheck.run()
         TTSMixSettingsSelfCheck.run()
+        TTSModelsSelfCheck.run()
         EdgeOnlineTTSSelfCheck.run()
+        OpenRouterTTSSelfCheck.run()
+        OpenRouterTokenStoreSelfCheck.run()
         #endif
     }
 
