@@ -1,8 +1,5 @@
 import SwiftUI
 import Observation
-#if canImport(UIKit)
-import UIKit
-#endif
 
 @MainActor
 @Observable
@@ -326,6 +323,7 @@ private struct TrackBrowserView: View {
                     .lineLimit(2)
             }
             .buttonStyle(.plain)
+            .copyContextMenu(currentTitle, label: "文件夹名称")
 
             Image(systemName: isPathMenuExpanded ? "chevron.up" : "chevron.down")
                 .font(.caption.weight(.semibold))
@@ -359,6 +357,7 @@ private struct TrackBrowserView: View {
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .copyContextMenu(item.title, label: "文件夹名称")
             }
         }
         .padding(10)
@@ -392,32 +391,34 @@ private struct TrackBrowserNode: View {
     let playAudio: (TrackNode) -> Void
 
     var body: some View {
-        if item.node.isFolder {
-            Button {
-                openFolder(item.node)
-            } label: {
+        Group {
+            if item.node.isFolder {
+                Button {
+                    openFolder(item.node)
+                } label: {
+                    TrackNodeRow(track: item.node)
+                }
+                .buttonStyle(.plain)
+            } else if item.node.isAudio, item.node.audioURL != nil {
+                Button {
+                    playAudio(item.node)
+                } label: {
+                    TrackNodeRow(track: item.node)
+                }
+                .buttonStyle(.plain)
+            } else if item.node.imagePreviewURL != nil {
+                Button {
+                    previewImage(item)
+                } label: {
+                    TrackNodeRow(track: item.node)
+                }
+                .buttonStyle(.plain)
+            } else {
                 TrackNodeRow(track: item.node)
             }
-            .buttonStyle(.plain)
-        } else if item.node.isAudio, item.node.audioURL != nil {
-            Button {
-                playAudio(item.node)
-            } label: {
-                TrackNodeRow(track: item.node)
-            }
-            .buttonStyle(.plain)
-        } else if item.node.imagePreviewURL != nil {
-            Button {
-                previewImage(item)
-            } label: {
-                TrackNodeRow(track: item.node)
-            }
-            .buttonStyle(.plain)
-        } else {
-            TrackNodeRow(track: item.node)
         }
+        .copyContextMenu(item.node.title, label: "文件名")
     }
-
 }
 
 private struct ImagePreviewSheet: View {
@@ -892,11 +893,7 @@ struct DetailHero: View {
                         .padding(.vertical, 5)
                         .background(.ultraThinMaterial, in: .capsule)
                         .padding(10)
-                        .contextMenu {
-                            Button("复制 \(work.rjCode)") {
-                                copy(work.rjCode)
-                            }
-                        }
+                        .copyContextMenu(work.rjCode, label: "RJ 号")
                 }
             }
             .aspectRatio(4 / 3, contentMode: .fit)
@@ -908,6 +905,7 @@ struct DetailHero: View {
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
 
                 ChipFlowLayout(spacing: 6) {
                     if let rateAverage = work.rateAverage, rateAverage > 0 {
@@ -928,6 +926,7 @@ struct DetailHero: View {
                             VoiceActorChip(text: actor.name)
                         }
                         .buttonStyle(.plain)
+                        .copyContextMenu(actor.name, label: "声优名称")
                     }
 
                     Button {
@@ -936,6 +935,7 @@ struct DetailHero: View {
                         CircleChip(text: work.name)
                     }
                     .buttonStyle(.plain)
+                    .copyContextMenu(work.name, label: "社团名称")
 
                     ForEach(work.tags) { tag in
                         Button {
@@ -944,6 +944,7 @@ struct DetailHero: View {
                             TagChip(text: tag.name)
                         }
                         .buttonStyle(.plain)
+                        .copyContextMenu(tag.name, label: "标签")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -958,11 +959,5 @@ struct DetailHero: View {
         }
         .clipShape(.rect(cornerRadius: 18))
         .accessibilityElement(children: .combine)
-    }
-
-    private func copy(_ text: String) {
-        #if canImport(UIKit)
-        UIPasteboard.general.string = text
-        #endif
     }
 }

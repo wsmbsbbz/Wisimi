@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct WorksListView: View {
     private let client: ASMRClient
@@ -1062,6 +1063,14 @@ private struct MiniPlayerBar: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                Button("复制文件名", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = player.currentTrack?.title ?? "未播放"
+                }
+                Button("复制作品标题", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = player.workTitle
+                }
+            }
 
             Button {
                 player.togglePlay()
@@ -1131,6 +1140,7 @@ private struct MasonryGrid: View {
                     WorkRow(work: work, width: columnWidth)
                 }
                 .buttonStyle(.plain)
+                .copyContextMenu(work.title, label: "作品标题")
                 .frame(width: columnWidth)
                 .clipped()
             }

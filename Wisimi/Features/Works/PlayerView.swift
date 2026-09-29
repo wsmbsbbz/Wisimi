@@ -79,10 +79,12 @@ private struct PlayerCoverContent: View {
                         .font(.title3.weight(.semibold))
                         .multilineTextAlignment(.center)
                         .lineLimit(3)
+                        .copyContextMenu(player.currentTrack?.title ?? "未播放", label: "文件名")
                     Text(player.circleName)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .copyContextMenu(player.circleName, label: "社团名称")
                 }
 
                 Spacer(minLength: 0)
@@ -198,6 +200,7 @@ private struct SubtitleListView: View {
                                     .animation(.easeOut(duration: 0.25), value: player.currentSubtitleIndex)
                                 }
                                 .buttonStyle(.plain)
+                                .copyContextMenu(subtitle.text, label: "字幕")
                                 .id(index)
                             }
                         }
