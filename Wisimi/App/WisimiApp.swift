@@ -8,6 +8,7 @@ struct WisimiApp: App {
         AuthSelfCheck.run()
         ASMRClientURLSelfCheck.run()
         PlaybackStateSelfCheck.run()
+        SleepTimerSelfCheck.run()
         AudioPlayerSelfCheck.run()
         WorksNavigationSelfCheck.run()
         WorksFilterContextSelfCheck.run()

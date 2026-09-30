@@ -18,6 +18,8 @@ final class WorkAudioPlayer: ObservableObject {
     @Published var duration: TimeInterval = 0
     @Published private(set) var playbackState: PlaybackState = .paused
     @Published private(set) var playbackError: String?
+    @Published private(set) var sleepTimer: SleepTimer = .off
+    private var sleepTimerTask: Task<Void, Never>?
     @Published var subtitles: [SubtitleLine] = []
     @Published var currentSubtitleIndex: Int?
     @Published private(set) var narrationStatuses: [SubtitleLine.ID: TTSGenerationStatus] = [:]
@@ -115,6 +117,7 @@ final class WorkAudioPlayer: ObservableObject {
 
     func play(queue: [TrackNode], start track: TrackNode, siblings: [TrackNode], work: WorkDetail) {
         guard let index = queue.firstIndex(where: { $0.id == track.id }), queue[index].audioURL != nil else { return }
+        if sleepTimer == .endOfTrack { setSleepTimer(.off) }
         self.queue = queue
         self.siblings = siblings
         currentIndex = index
@@ -136,11 +139,13 @@ final class WorkAudioPlayer: ObservableObject {
 
     func previous() {
         guard !queue.isEmpty else { return }
+        if sleepTimer == .endOfTrack { setSleepTimer(.off) }
         currentIndex = max(currentIndex - 1, 0)
         loadCurrent(siblings: siblings, autoPlay: true)
     }
 
     func next() {
+        if sleepTimer == .endOfTrack { setSleepTimer(.off) }
         guard currentIndex + 1 < queue.count else {
             pauseCurrent()
             return
@@ -193,7 +198,8 @@ final class WorkAudioPlayer: ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 guard self.player.currentItem === item else { return }
-                self.next()
+                guard self.playbackState.wantsPlayback else { return }
+                self.trackDidEnd()
             }
         }
         itemStatusCancellable = item.publisher(for: \.status).sink { [weak self, weak item] status in
@@ -235,6 +241,7 @@ final class WorkAudioPlayer: ObservableObject {
     }
 
     private func syncProgress() {
+        guard !stopIfSleepTimerExpired() else { return }
         let seconds = player.currentTime().seconds
         if seconds.isFinite, position != seconds {
             position = seconds
@@ -322,11 +329,44 @@ final class WorkAudioPlayer: ObservableObject {
         #endif
     }
 
+    func setSleepTimer(_ timer: SleepTimer) {
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
+        sleepTimer = timer
+        guard case .deadline(let deadline) = timer else { return }
+        if stopIfSleepTimerExpired() { return }
+        sleepTimerTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) }
+            catch { return }
+            guard let self, self.sleepTimer == timer else { return }
+            self.setSleepTimer(.off)
+            self.pauseCurrent()
+        }
+    }
+
+    @discardableResult
+    func stopIfSleepTimerExpired() -> Bool {
+        guard sleepTimer.hasExpired() else { return false }
+        setSleepTimer(.off)
+        pauseCurrent()
+        return true
+    }
+
+    private func trackDidEnd() {
+        if sleepTimer == .endOfTrack {
+            setSleepTimer(.off)
+            pauseCurrent()
+        } else {
+            next()
+        }
+    }
+
     func retryPlayback() {
         loadCurrent(siblings: siblings, autoPlay: true, resumePosition: position)
     }
 
     private func playCurrent() {
+        guard !stopIfSleepTimerExpired() else { return }
         guard currentTrack != nil else { return }
         if playbackError != nil {
             retryPlayback()
@@ -342,6 +382,7 @@ final class WorkAudioPlayer: ObservableObject {
         playbackState = playbackState.receiving(.pause)
         player.pause()
         stopNarration(clearLast: true)
+        cancelPrefetchTasks()
         syncProgress()
         savePlayback(force: true)
     }
@@ -412,7 +453,7 @@ final class WorkAudioPlayer: ObservableObject {
     }
 
     private func prefetchUpcomingNarration() {
-        guard ttsSettings.isEnabled, let currentSubtitleIndex else { return }
+        guard ttsSettings.isEnabled, playbackState == .playing, let currentSubtitleIndex else { return }
         let indices = Self.prefetchIndices(after: currentSubtitleIndex, subtitleCount: subtitles.count)
         for index in indices {
             prefetchNarration(at: index)
@@ -602,7 +643,7 @@ final class WorkAudioPlayer: ObservableObject {
             let message = error?.localizedDescription
             Task { @MainActor in
                 self.isActivatingAudioSession = false
-                guard self.playbackState.wantsPlayback else { return }
+                guard self.playbackState.wantsPlayback, !self.stopIfSleepTimerExpired() else { return }
                 guard activated else {
                     self.failPlayback(message ?? "无法启用音频播放，请重试")
                     return
@@ -779,7 +820,26 @@ final class WorkAudioPlayer: ObservableObject {
         assert(currentIndex == 1 && playbackState.wantsPlayback)
         next()
         assert(playbackState == .paused)
-        print("Playback integration checks passed")
+        setSleepTimer(.deadline(.now.addingTimeInterval(0.2)))
+        playCurrent()
+        try await Task.sleep(for: .milliseconds(500))
+        assert(playbackState == .paused && sleepTimer == .off)
+        assert(prefetchTasks.isEmpty && narrationTask == nil)
+        setSleepTimer(.deadline(.now.addingTimeInterval(0.2)))
+        setSleepTimer(.off)
+        playCurrent()
+        try await Task.sleep(for: .milliseconds(500))
+        assert(playbackState.wantsPlayback)
+        setSleepTimer(.endOfTrack)
+        let index = currentIndex
+        trackDidEnd()
+        assert(currentIndex == index && playbackState == .paused && sleepTimer == .off)
+        setSleepTimer(.endOfTrack)
+        previous()
+        assert(sleepTimer == .off)
+        setSleepTimer(.deadline(.now.addingTimeInterval(-1)))
+        assert(playbackState == .paused && sleepTimer == .off)
+        print("Playback and sleep timer integration checks passed")
     }
     #endif
 

@@ -4,6 +4,7 @@ struct PlayerView: View {
     @ObservedObject var player: WorkAudioPlayer
     let openWorkDetail: () -> Void
     @State private var isShowingSubtitles = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,15 +25,37 @@ struct PlayerView: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
+                switch player.sleepTimer {
+                case .off:
+                    EmptyView()
+                case .endOfTrack:
+                    Label("本曲结束时停止", systemImage: "moon.zzz.fill")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .deadline(let deadline):
+                    HStack(spacing: 4) {
+                        Image(systemName: "moon.zzz.fill")
+                        Text(timerInterval: Date.now...max(Date.now, deadline), countsDown: true)
+                            .monospacedDigit().fixedSize()
+                        Text("后停止")
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityElement(children: .combine)
+                }
                 PlayerProgress(player: player)
                 PlayerControls(player: player)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { player.stopIfSleepTimerExpired() }
+        }
         .navigationTitle("播放器")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                SleepTimerMenu(player: player)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: openWorkDetail) {
                     Label("作品详情", systemImage: "info.circle")
@@ -302,6 +325,38 @@ private struct NarrationStatusIcon: View {
         case .generating: "TTS 正在生成"
         case .ready: "TTS 已生成"
         case .failed: "TTS 生成失败"
+        }
+    }
+}
+
+private struct SleepTimerMenu: View {
+    @ObservedObject var player: WorkAudioPlayer
+
+    var body: some View {
+        Menu {
+            ForEach([15, 30, 60], id: \.self) { minutes in
+                Button("\(minutes) 分钟后停止") {
+                    player.setSleepTimer(.deadline(.now.addingTimeInterval(Double(minutes) * 60)))
+                }
+            }
+            Button("本曲结束时停止") { player.setSleepTimer(.endOfTrack) }
+            if player.sleepTimer != .off {
+                Divider()
+                Button("取消定时", role: .destructive) { player.setSleepTimer(.off) }
+            }
+        } label: {
+            Image(systemName: player.sleepTimer == .off ? "moon.zzz" : "moon.zzz.fill")
+        }
+        .accessibilityLabel("睡眠定时器")
+        .accessibilityValue(status)
+        .disabled(player.currentTrack == nil)
+    }
+
+    private var status: String {
+        switch player.sleepTimer {
+        case .off: "未启用"
+        case .endOfTrack: "本曲结束时停止"
+        case .deadline(let deadline): "将在 \(deadline.formatted(date: .omitted, time: .shortened)) 停止"
         }
     }
 }
