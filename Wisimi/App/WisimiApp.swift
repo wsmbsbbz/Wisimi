@@ -7,6 +7,7 @@ struct WisimiApp: App {
         DecodeSelfCheck.run()
         AuthSelfCheck.run()
         ASMRClientURLSelfCheck.run()
+        PlaybackStateSelfCheck.run()
         AudioPlayerSelfCheck.run()
         WorksNavigationSelfCheck.run()
         WorksFilterContextSelfCheck.run()

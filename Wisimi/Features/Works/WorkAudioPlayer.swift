@@ -16,7 +16,8 @@ final class WorkAudioPlayer: ObservableObject {
     @Published var coverURL: URL?
     @Published var position: TimeInterval = 0
     @Published var duration: TimeInterval = 0
-    @Published var isPlaying = false
+    @Published private(set) var playbackState: PlaybackState = .paused
+    @Published private(set) var playbackError: String?
     @Published var subtitles: [SubtitleLine] = []
     @Published var currentSubtitleIndex: Int?
     @Published private(set) var narrationStatuses: [SubtitleLine.ID: TTSGenerationStatus] = [:]
@@ -30,7 +31,10 @@ final class WorkAudioPlayer: ObservableObject {
     private var siblings: [TrackNode] = []
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    private var failureObserver: NSObjectProtocol?
+    private var itemStatusCancellable: AnyCancellable?
     private var interruptionObserver: NSObjectProtocol?
+    private var resumptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
     private var playerStatusCancellable: AnyCancellable?
     private var settingsCancellables: Set<AnyCancellable> = []
@@ -42,7 +46,6 @@ final class WorkAudioPlayer: ObservableObject {
     private var nowPlayingArtworkURL: URL?
     private var wasPlayingBeforeInterruption = false
     private var isActivatingAudioSession = false
-    private var shouldPlayAfterActivation = false
     private var lastSavedPosition: TimeInterval = -1
     private var lastNarrationID: String?
     private var openRouterSession = OpenRouterPlaybackSession()
@@ -57,7 +60,8 @@ final class WorkAudioPlayer: ObservableObject {
         narrationPlayer.volume = Float(ttsSettings.volume)
         playerStatusCancellable = player.publisher(for: \.timeControlStatus)
             .sink { [weak self] _ in
-                Task { @MainActor in self?.syncProgress() }
+                guard let self else { return }
+                Task { @MainActor in self.syncProgress() }
             }
         ttsSettings.$volume
             .sink { [weak self] volume in
@@ -94,7 +98,8 @@ final class WorkAudioPlayer: ObservableObject {
             }
             .store(in: &settingsCancellables)
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.syncProgress() }
+            guard let self else { return }
+            Task { @MainActor in self.syncProgress() }
         }
         Task { await restorePlayback() }
     }
@@ -121,8 +126,8 @@ final class WorkAudioPlayer: ObservableObject {
         loadCurrent(siblings: siblings, autoPlay: true)
     }
 
-    func togglePlay() {
-        if isPlaying {
+    func togglePlayback() {
+        if playbackState.wantsPlayback {
             pauseCurrent()
         } else {
             playCurrent()
@@ -165,6 +170,10 @@ final class WorkAudioPlayer: ObservableObject {
         guard let track = currentTrack, let url = track.audioURL else { return }
 
         endObserver.map(NotificationCenter.default.removeObserver)
+        failureObserver.map(NotificationCenter.default.removeObserver)
+        itemStatusCancellable = nil
+        playbackError = nil
+        playbackState = autoPlay ? .preparing : .paused
         let item = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: item)
         stopNarration(clearLast: true)
@@ -177,11 +186,32 @@ final class WorkAudioPlayer: ObservableObject {
         player.seek(to: CMTime(seconds: position, preferredTimescale: 600))
         savePlayback(force: true)
         endObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
+            forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: item,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.next() }
+            guard let self else { return }
+            Task { @MainActor in
+                guard self.player.currentItem === item else { return }
+                self.next()
+            }
+        }
+        itemStatusCancellable = item.publisher(for: \.status).sink { [weak self, weak item] status in
+            guard status == .failed else { return }
+            Task { @MainActor in
+                guard let self, let item, self.player.currentItem === item else { return }
+                self.failPlayback(item.error?.localizedDescription ?? "音频加载失败，请重试")
+            }
+        }
+        failureObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            let message = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
+            Task { @MainActor in
+                guard self.player.currentItem === item else { return }
+                self.failPlayback(message ?? "音频播放失败，请重试")
+            }
         }
 
         loadTask = Task { [client] in
@@ -213,9 +243,11 @@ final class WorkAudioPlayer: ObservableObject {
         if let itemDuration, itemDuration.isFinite, itemDuration > 0, duration != itemDuration {
             duration = itemDuration
         }
-        let isCurrentlyPlaying = player.timeControlStatus == .playing
-        if isPlaying != isCurrentlyPlaying {
-            isPlaying = isCurrentlyPlaying
+        switch player.timeControlStatus {
+        case .playing: playbackState = playbackState.receiving(.outputStarted)
+        case .waitingToPlayAtSpecifiedRate: playbackState = playbackState.receiving(.waiting)
+        case .paused: break
+        @unknown default: break
         }
         updateSubtitle()
         syncNarration()
@@ -258,6 +290,7 @@ final class WorkAudioPlayer: ObservableObject {
               let tracks = try? await client.fetchTracks(workID: snapshot.workID),
               let context = Self.playbackContext(for: snapshot.trackID, in: tracks) else { return }
 
+        guard currentTrack == nil else { return }
         queue = context.queue
         siblings = context.siblings
         currentIndex = context.index
@@ -289,25 +322,37 @@ final class WorkAudioPlayer: ObservableObject {
         #endif
     }
 
-    private func playCurrent() {
-        shouldPlayAfterActivation = true
-        activateAudioSession { [weak self] activated in
-            guard let self, activated, self.shouldPlayAfterActivation else { return }
-            shouldPlayAfterActivation = false
-            player.play()
-            syncProgress()
-        }
+    func retryPlayback() {
+        loadCurrent(siblings: siblings, autoPlay: true, resumePosition: position)
     }
 
-    private func pauseCurrent() {
-        shouldPlayAfterActivation = false
+    private func playCurrent() {
+        guard currentTrack != nil else { return }
+        if playbackError != nil {
+            retryPlayback()
+            return
+        }
+        playbackState = playbackState.receiving(.play)
+        updateNowPlaying()
+        activateAudioSession()
+    }
+
+    private func pauseCurrent(preservingInterruption: Bool = false) {
+        if !preservingInterruption { wasPlayingBeforeInterruption = false }
+        playbackState = playbackState.receiving(.pause)
         player.pause()
         stopNarration(clearLast: true)
         syncProgress()
+        savePlayback(force: true)
+    }
+
+    private func failPlayback(_ message: String) {
+        pauseCurrent()
+        playbackError = message
     }
 
     private func syncNarration() {
-        guard ttsSettings.isEnabled, isPlaying, let currentTrack else {
+        guard ttsSettings.isEnabled, playbackState == .playing, let currentTrack else {
             stopNarration(clearLast: false)
             return
         }
@@ -337,7 +382,7 @@ final class WorkAudioPlayer: ObservableObject {
                 guard !Task.isCancelled else { return }
                 narrationStatuses[subtitle.id] = .ready
                 guard ttsSettings.isEnabled,
-                      isPlaying,
+                      playbackState == .playing,
                       currentNarrationID() == narrationID else { return }
                 let item = AVPlayerItem(url: outputURL)
                 narrationPlayer.replaceCurrentItem(with: item)
@@ -548,22 +593,28 @@ final class WorkAudioPlayer: ObservableObject {
         ttsSettings.runtimeNotice = message
     }
 
-    private func activateAudioSession(then action: @escaping @MainActor (Bool) -> Void) {
+    private func activateAudioSession() {
         #if os(iOS)
         guard !isActivatingAudioSession else { return }
         isActivatingAudioSession = true
         AVAudioSession.sharedInstance().activate(options: []) { [weak self] activated, error in
+            guard let self else { return }
+            let message = error?.localizedDescription
             Task { @MainActor in
-                guard let self else { return }
                 self.isActivatingAudioSession = false
-                if let error {
-                    print("Audio session activation failed: \(error.localizedDescription)")
+                guard self.playbackState.wantsPlayback else { return }
+                guard activated else {
+                    self.failPlayback(message ?? "无法启用音频播放，请重试")
+                    return
                 }
-                action(activated)
+                self.player.play()
+                self.syncProgress()
             }
         }
         #else
-        action(true)
+        guard playbackState.wantsPlayback else { return }
+        player.play()
+        syncProgress()
         #endif
     }
 
@@ -579,7 +630,7 @@ final class WorkAudioPlayer: ObservableObject {
         info[MPMediaItemPropertyAlbumTitle] = workTitle
         info[MPMediaItemPropertyArtist] = circleName
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1 : 0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = playbackState.wantsPlayback ? 1 : 0
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
         }
@@ -642,31 +693,26 @@ final class WorkAudioPlayer: ObservableObject {
         #if os(iOS)
         let center = NotificationCenter.default
         interruptionObserver = center.addObserver(
-            forName: AVAudioSession.interruptionNotification,
-            object: AVAudioSession.sharedInstance(),
-            queue: .main
+            forName: AVAudioSession.didBecomeInactiveNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.wasPlayingBeforeInterruption = self.playbackState.wantsPlayback
+                self.pauseCurrent(preservingInterruption: true)
+            }
+        }
+        resumptionObserver = center.addObserver(
+            forName: AVAudioSession.resumptionRecommendationNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main
         ) { [weak self] notification in
             guard let self,
-                  let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
-
+                  let context = notification.userInfo?[AVAudioSession.resumptionContextKey] as? AVAudioSession.ResumptionContext else { return }
+            let shouldResume = context.recommendation == .shouldResume
             Task { @MainActor in
-                switch type {
-                case .began:
-                    self.wasPlayingBeforeInterruption = self.isPlaying
-                    self.pauseCurrent()
-                case .ended:
-                    let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-                    let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
-                    if options.contains(.shouldResume), self.wasPlayingBeforeInterruption {
-                        self.playCurrent()
-                    } else {
-                        self.updateNowPlaying()
-                    }
-                    self.wasPlayingBeforeInterruption = false
-                @unknown default:
-                    self.updateNowPlaying()
-                }
+                let resume = shouldResume && self.wasPlayingBeforeInterruption
+                self.wasPlayingBeforeInterruption = false
+                if resume { self.playCurrent() }
             }
         }
 
@@ -679,10 +725,63 @@ final class WorkAudioPlayer: ObservableObject {
                   AVAudioSession.RouteChangeReason(rawValue: rawReason) == .oldDeviceUnavailable else { return }
             let previousRoute = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
             guard previousRoute?.outputs.contains(where: \.isDisconnectableAudioOutput) == true else { return }
-            Task { @MainActor in self?.pauseCurrent() }
+            guard let self else { return }
+            Task { @MainActor in self.pauseCurrent() }
         }
         #endif
     }
+
+    #if DEBUG
+    func prepareDebugPlayback() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("wisimi-playback-check.caf")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 240000)!
+        buffer.frameLength = buffer.frameCapacity
+        try AVAudioFile(forWriting: url, settings: format.settings).write(from: buffer)
+        let json = """
+        [{"type":"audio","title":"晚安 · 轻声陪伴与耳边细语","hash":"debug-a","duration":30,"mediaStreamUrl":"\(url.absoluteString)"},
+         {"type":"audio","title":"第二段 · 安静休息","hash":"debug-b","duration":30,"mediaStreamUrl":"\(url.absoluteString)"}]
+        """
+        queue = try JSONDecoder().decode([TrackNode].self, from: Data(json.utf8))
+        workTitle = "播放器验证"
+        circleName = "Wisimi"
+        ttsSettings.isEnabled = false
+        loadCurrent(siblings: queue, autoPlay: false)
+    }
+
+    func runPlaybackChecks() async throws {
+        try prepareDebugPlayback()
+        togglePlayback()
+        assert(playbackState == .preparing)
+        togglePlayback()
+        try await Task.sleep(for: .milliseconds(500))
+        assert(playbackState == .paused)
+        togglePlayback()
+        togglePlayback()
+        togglePlayback()
+        try await Task.sleep(for: .seconds(1))
+        assert(playbackState == .playing)
+        playbackState = playbackState.receiving(.waiting)
+        assert(playbackState.wantsPlayback)
+        togglePlayback()
+        assert(playbackState == .paused)
+        playCurrent()
+        wasPlayingBeforeInterruption = playbackState.wantsPlayback
+        pauseCurrent(preservingInterruption: true)
+        assert(wasPlayingBeforeInterruption)
+        pauseCurrent()
+        assert(!wasPlayingBeforeInterruption)
+        failPlayback("验证错误")
+        assert(playbackState == .paused && playbackError != nil)
+        retryPlayback()
+        assert(playbackState.wantsPlayback && playbackError == nil)
+        next()
+        assert(currentIndex == 1 && playbackState.wantsPlayback)
+        next()
+        assert(playbackState == .paused)
+        print("Playback integration checks passed")
+    }
+    #endif
 
     private static func matchSubtitle(for audio: TrackNode, in siblings: [TrackNode]) -> TrackNode? {
         let base = audio.title.deletingPathExtension.lowercased()

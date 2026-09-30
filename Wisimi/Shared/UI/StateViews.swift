@@ -30,3 +30,23 @@ struct EmptyStateView: View {
         }
     }
 }
+
+struct InlineRetryView: View {
+    let message: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(message, systemImage: "exclamationmark.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("重试", action: retry)
+                .buttonStyle(.bordered)
+                .frame(minHeight: 44)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.quaternary, in: .rect(cornerRadius: 12))
+    }
+}

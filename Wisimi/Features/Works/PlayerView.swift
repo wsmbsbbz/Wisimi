@@ -15,6 +15,15 @@ struct PlayerView: View {
                 .padding(.bottom, 12)
 
             VStack(spacing: 14) {
+                if let message = player.playbackError {
+                    InlineRetryView(message: message, retry: player.retryPlayback)
+                } else if player.playbackState == .preparing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("正在准备播放…").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 PlayerProgress(player: player)
                 PlayerControls(player: player)
             }
@@ -143,12 +152,8 @@ private struct PlayerControls: View {
                     .frame(width: 44, height: 44)
             }
 
-            Button {
-                player.togglePlay()
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 64))
-            }
+            PlaybackToggleButton(state: player.playbackState, action: player.togglePlayback)
+                .disabled(player.currentTrack == nil)
 
             Button {
                 player.next()

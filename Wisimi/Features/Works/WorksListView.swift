@@ -30,11 +30,16 @@ struct WorksListView: View {
         let ttsSettings = TTSMixSettings()
         self.client = client
         _ttsSettings = StateObject(wrappedValue: ttsSettings)
-        _player = StateObject(wrappedValue: WorkAudioPlayer(client: client, ttsSettings: ttsSettings))
+        let player = WorkAudioPlayer(client: client, ttsSettings: ttsSettings)
+        _player = StateObject(wrappedValue: player)
         _auth = StateObject(wrappedValue: AuthSession(client: client))
         #if DEBUG
         let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
         _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
+        if debugScreen == "player" || debugScreen == "mini-player" {
+            try? player.prepareDebugPlayback()
+            _path = State(initialValue: debugScreen == "player" ? [.player] : [])
+        }
         #endif
     }
 
@@ -211,6 +216,13 @@ struct WorksListView: View {
             }
         }
         .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["WISIMI_PLAYBACK_CHECKS"] == "1" {
+                do { try await player.runPlaybackChecks() }
+                catch { assertionFailure("Playback checks failed: \(error)") }
+                return
+            }
+            #endif
             await loadWorks(page: currentPage)
         }
     }
@@ -1051,7 +1063,7 @@ private struct MiniPlayerBar: View {
                         Text(player.currentTrack?.title ?? "未播放")
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
-                        Text(player.currentSubtitle?.text ?? player.workTitle)
+                        Text(player.playbackError ?? (player.playbackState == .preparing ? "正在准备播放…" : player.currentSubtitle?.text ?? player.workTitle))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -1072,13 +1084,7 @@ private struct MiniPlayerBar: View {
                 }
             }
 
-            Button {
-                player.togglePlay()
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.plain)
+            PlaybackToggleButton(state: player.playbackState, isCompact: true, action: player.togglePlayback)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
