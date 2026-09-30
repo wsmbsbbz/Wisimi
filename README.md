@@ -15,6 +15,9 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 查看作品详情、封面、评分、时长、销量、标签、声优和音轨目录
 - 长按复制作品标题、标签、声优、社团、文件名和字幕；详情标题支持文字选择
 - 在线播放音频，支持上一首、下一首、进度拖动、后台播放控制和播放进度恢复
+- 播放器区分准备与正在播放，支持音频失败后从当前位置重试
+- 睡眠定时器：15、30、60 分钟后停止或本曲结束停止，同时停止中文旁白
+- 搜索、筛选和模式切换以最新请求为准；刷新失败保留已有内容并提供重试
 - 读取 VTT/LRC 字幕，播放时显示当前字幕并支持点击字幕跳转
 - 使用 Edge 或自备 OpenRouter 凭据生成中文旁白，支持固定模型、精选音色、表达预设、音量和模型专属语速；MiniMax 仅提供 6 种适合 ASMR 的精选女音，并额外支持固定句内停顿、呼吸、叹息、吸气、呼气、哼唱与唇音效果
 - 登录 asmr.one 账号，保存 token 到 Keychain
@@ -36,6 +39,16 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 ```sh
 xcodebuild -project Wisimi.xcodeproj -scheme Wisimi -configuration Debug -sdk iphonesimulator build
 ```
+
+## Verification
+
+运行不依赖网络的状态与列表请求竞态自检：
+
+```sh
+sh scripts/check-state.sh
+```
+
+Debug 模拟器中设置 `WISIMI_PLAYBACK_CHECKS=1` 可运行本地音频播放与睡眠定时器集成自检；设置 `WISIMI_WORKS_CHECKS=1` 可运行列表竞态自检。`WISIMI_DEBUG_SCREEN=player` 或 `mini-player` 提供播放器预览，叠加 `WISIMI_SLEEP_TIMER=1` 显示活动定时器；`WISIMI_DEBUG_SCREEN=list-error` 显示刷新失败保留内容的场景。上述入口只存在于 Debug 构建。
 
 ## Release
 

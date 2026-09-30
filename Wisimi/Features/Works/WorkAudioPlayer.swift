@@ -206,14 +206,14 @@ final class WorkAudioPlayer: ObservableObject {
             guard status == .failed else { return }
             Task { @MainActor in
                 guard let self, let item, self.player.currentItem === item else { return }
-                self.failPlayback(item.error?.localizedDescription ?? "音频加载失败，请重试")
+                self.failPlayback(item.error?.userFacingMessage ?? "音频加载失败，请重试")
             }
         }
         failureObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main
         ) { [weak self] notification in
             guard let self else { return }
-            let message = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
+            let message = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.userFacingMessage
             Task { @MainActor in
                 guard self.player.currentItem === item else { return }
                 self.failPlayback(message ?? "音频播放失败，请重试")
@@ -640,7 +640,7 @@ final class WorkAudioPlayer: ObservableObject {
         isActivatingAudioSession = true
         AVAudioSession.sharedInstance().activate(options: []) { [weak self] activated, error in
             guard let self else { return }
-            let message = error?.localizedDescription
+            let message = error?.userFacingMessage
             Task { @MainActor in
                 self.isActivatingAudioSession = false
                 guard self.playbackState.wantsPlayback, !self.stopIfSleepTimerExpired() else { return }
@@ -671,7 +671,7 @@ final class WorkAudioPlayer: ObservableObject {
         info[MPMediaItemPropertyAlbumTitle] = workTitle
         info[MPMediaItemPropertyArtist] = circleName
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
-        info[MPNowPlayingInfoPropertyPlaybackRate] = playbackState.wantsPlayback ? 1 : 0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = playbackState == .playing ? 1 : 0
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
         }
@@ -803,7 +803,9 @@ final class WorkAudioPlayer: ObservableObject {
         try await Task.sleep(for: .seconds(1))
         assert(playbackState == .playing)
         playbackState = playbackState.receiving(.waiting)
+        updateNowPlaying()
         assert(playbackState.wantsPlayback)
+        assert(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Int == 0)
         togglePlayback()
         assert(playbackState == .paused)
         playCurrent()
@@ -839,6 +841,24 @@ final class WorkAudioPlayer: ObservableObject {
         assert(sleepTimer == .off)
         setSleepTimer(.deadline(.now.addingTimeInterval(-1)))
         assert(playbackState == .paused && sleepTimer == .off)
+        try prepareDebugPlayback()
+        currentIndex = 0
+        setSleepTimer(.endOfTrack)
+        playCurrent()
+        try await Task.sleep(for: .milliseconds(500))
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            player.seek(to: CMTime(seconds: 29.9, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                continuation.resume()
+            }
+        }
+        try await Task.sleep(for: .seconds(1))
+        assert(currentIndex == 0 && playbackState == .paused && sleepTimer == .off)
+        let missingFile = #"[{"type":"audio","title":"missing","hash":"missing","mediaStreamUrl":"file:///wisimi-missing-check.caf"}]"#
+        queue = try JSONDecoder().decode([TrackNode].self, from: Data(missingFile.utf8))
+        loadCurrent(siblings: queue, autoPlay: true)
+        try await Task.sleep(for: .seconds(1))
+        assert(playbackError != nil && playbackState == .paused)
+        try prepareDebugPlayback()
         print("Playback and sleep timer integration checks passed")
     }
     #endif

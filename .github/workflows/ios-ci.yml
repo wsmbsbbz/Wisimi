@@ -24,6 +24,9 @@ jobs:
           xcodebuild -version | grep -q '^Xcode 27\.'
           xcodebuild -showsdks | grep -Eq 'iphoneos27\.[0-9]+'
 
+      - name: Check playback and request state
+        run: sh scripts/check-state.sh
+
       - name: Build unsigned iOS app
         run: |
           xcodebuild build \
