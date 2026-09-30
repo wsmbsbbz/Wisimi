@@ -7,11 +7,13 @@ struct WorksListView: View {
     @StateObject private var auth: AuthSession
     @StateObject private var ttsSettings: TTSMixSettings
     @State private var path: [WorksRoute] = []
-    @State private var works: [WorkSummary] = []
-    @State private var pagination: WorksPagination?
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var currentPage = 1
+    @State private var pageState = WorksPageState()
+
+    private var works: [WorkSummary] { pageState.works }
+    private var pagination: WorksPagination? { pageState.pagination }
+    private var isLoading: Bool { pageState.isLoading }
+    private var errorMessage: String? { pageState.errorMessage }
+    private var currentPage: Int { pageState.currentPage }
     @State private var selectedMode: WorksMode = .latest
     @State private var searchText = ""
     @State private var activeSearchText = ""
@@ -38,6 +40,9 @@ struct WorksListView: View {
         _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
         if debugScreen == "player" || debugScreen == "mini-player" {
             try? player.prepareDebugPlayback()
+            if ProcessInfo.processInfo.environment["WISIMI_SLEEP_TIMER"] == "1" {
+                player.setSleepTimer(.deadline(.now.addingTimeInterval(1800)))
+            }
             _path = State(initialValue: debugScreen == "player" ? [.player] : [])
         }
         #endif
@@ -72,7 +77,7 @@ struct WorksListView: View {
                                 .padding(.top, 40)
                         } else if let errorMessage, works.isEmpty {
                             RetryView(message: errorMessage) {
-                                await loadWorks(page: currentPage)
+                                await loadWorks(page: pageState.requestedPage)
                             }
                         } else if works.isEmpty {
                             EmptyStateView {
@@ -80,6 +85,11 @@ struct WorksListView: View {
                             }
                         } else {
                             VStack(spacing: 18) {
+                                if let errorMessage {
+                                    InlineRetryView(message: errorMessage) {
+                                        Task { await loadWorks(page: pageState.requestedPage) }
+                                    }
+                                }
                                 MasonryGrid(works: works) { work in
                                     path.append(.detail(work.id))
                                 }
@@ -217,6 +227,18 @@ struct WorksListView: View {
         }
         .task {
             #if DEBUG
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "list-error" {
+                let json = #"{"works":[{"id":1,"title":"晚安 · 轻声陪伴与耳边细语","name":"Wisimi","has_subtitle":true,"tags":[],"vas":[]}],"pagination":{"currentPage":1,"pageSize":12,"totalCount":36}}"#
+                await pageState.load(page: 1) {
+                    try JSONDecoder().decode(WorksResponse.self, from: Data(json.utf8))
+                }
+                await pageState.load(page: 2) { throw URLError(.notConnectedToInternet) }
+                return
+            }
+            if ProcessInfo.processInfo.environment["WISIMI_WORKS_CHECKS"] == "1" {
+                await WorksPageStateSelfCheck.run()
+                return
+            }
             if ProcessInfo.processInfo.environment["WISIMI_PLAYBACK_CHECKS"] == "1" {
                 do { try await player.runPlaybackChecks() }
                 catch { assertionFailure("Playback checks failed: \(error)") }
@@ -283,7 +305,7 @@ struct WorksListView: View {
     }
 
     private func reloadFromFirstPage() async {
-        pagination = nil
+        pageState.reset()
         await loadWorks(page: 1)
     }
 
@@ -300,42 +322,38 @@ struct WorksListView: View {
     }
 
     private func loadWorks(page: Int = 1) async {
-        guard !isLoading else { return }
         if let totalPages = pagination?.totalPages, page > totalPages { return }
         guard page >= 1 else { return }
+        let keyword = activeSearchText
+        let mode = selectedMode
+        let worksFilter = filter
+        let favoritesFilter = reviewFilter
+        let token = auth.token
+        let recommenderUuid = auth.recommenderUuid
 
-        isLoading = true
-        errorMessage = nil
-        do {
-            let response: WorksResponse
-            if !activeSearchText.isEmpty {
-                response = try await client.searchWorks(keyword: activeSearchText, page: page, filter: filter)
-            } else {
-                switch selectedMode {
-                case .latest:
-                    response = try await client.fetchWorks(page: page, filter: filter)
-                case .popular:
-                    response = try await client.fetchPopular(page: page, filter: filter)
-                case .favorites:
-                    guard let token = auth.token else { throw ASMRClientError.loginRequired }
-                    response = try await client.fetchFavorites(page: page, token: token, filter: reviewFilter)
-                case .playlists:
-                    guard let token = auth.token else { throw ASMRClientError.loginRequired }
-                    let playlistID = try await ensureSelectedPlaylist(token: token)
-                    response = try await client.fetchPlaylistWorks(id: playlistID, page: page, token: token)
-                case .recommended:
-                    guard let token = auth.token else { throw ASMRClientError.loginRequired }
-                    guard let uuid = auth.recommenderUuid, !uuid.isEmpty else { throw ASMRClientError.missingRecommenderUuid }
-                    response = try await client.fetchRecommended(page: page, uuid: uuid, token: token, filter: filter)
-                }
+        await pageState.load(page: page) {
+            if !keyword.isEmpty {
+                return try await client.searchWorks(keyword: keyword, page: page, filter: worksFilter)
             }
-            works = response.works
-            pagination = response.pagination
-            currentPage = response.pagination.currentPage
-        } catch {
-            errorMessage = error.localizedDescription
+            switch mode {
+            case .latest:
+                return try await client.fetchWorks(page: page, filter: worksFilter)
+            case .popular:
+                return try await client.fetchPopular(page: page, filter: worksFilter)
+            case .favorites:
+                guard let token else { throw ASMRClientError.loginRequired }
+                return try await client.fetchFavorites(page: page, token: token, filter: favoritesFilter)
+            case .playlists:
+                guard let token else { throw ASMRClientError.loginRequired }
+                let playlistID = try await ensureSelectedPlaylist(token: token)
+                try Task.checkCancellation()
+                return try await client.fetchPlaylistWorks(id: playlistID, page: page, token: token)
+            case .recommended:
+                guard let token else { throw ASMRClientError.loginRequired }
+                guard let recommenderUuid, !recommenderUuid.isEmpty else { throw ASMRClientError.missingRecommenderUuid }
+                return try await client.fetchRecommended(page: page, uuid: recommenderUuid, token: token, filter: worksFilter)
+            }
         }
-        isLoading = false
     }
 
     private func ensureSelectedPlaylist(token: String) async throws -> String {
@@ -344,6 +362,7 @@ struct WorksListView: View {
         }
 
         let response = try await client.fetchPlaylists(token: token)
+        try Task.checkCancellation()
         playlists = response.playlists
         guard let first = response.playlists.first else { throw ASMRClientError.noPlaylists }
         selectedPlaylistID = first.id
