@@ -56,6 +56,7 @@ final class WorkAudioPlayer: ObservableObject {
     init(client: ASMRClient, ttsSettings: TTSMixSettings) {
         self.client = client
         self.ttsSettings = ttsSettings
+        player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         configureAudioSession()
         configureRemoteCommands()
         observeAudioSession()
@@ -106,6 +107,8 @@ final class WorkAudioPlayer: ObservableObject {
         Task { await restorePlayback() }
     }
 
+    var videoPlayer: AVPlayer { player }
+
     var currentTrack: TrackNode? {
         queue.indices.contains(currentIndex) ? queue[currentIndex] : nil
     }
@@ -116,7 +119,7 @@ final class WorkAudioPlayer: ObservableObject {
     }
 
     func play(queue: [TrackNode], start track: TrackNode, siblings: [TrackNode], work: WorkDetail) {
-        guard let index = queue.firstIndex(where: { $0.id == track.id }), queue[index].audioURL != nil else { return }
+        guard let index = queue.firstIndex(where: { $0.id == track.id }), queue[index].playbackURL != nil else { return }
         if sleepTimer == .endOfTrack { setSleepTimer(.off) }
         self.queue = queue
         self.siblings = siblings
@@ -156,7 +159,7 @@ final class WorkAudioPlayer: ObservableObject {
 
     func seek(to seconds: TimeInterval) {
         let target = max(0, min(seconds, duration))
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         position = target
         updateSubtitle()
         stopNarration(clearLast: true)
@@ -172,7 +175,7 @@ final class WorkAudioPlayer: ObservableObject {
 
     private func loadCurrent(siblings: [TrackNode], autoPlay: Bool, resumePosition: TimeInterval = 0) {
         loadTask?.cancel()
-        guard let track = currentTrack, let url = track.audioURL else { return }
+        guard let track = currentTrack, let url = track.playbackURL else { return }
 
         endObserver.map(NotificationCenter.default.removeObserver)
         failureObserver.map(NotificationCenter.default.removeObserver)
@@ -188,7 +191,7 @@ final class WorkAudioPlayer: ObservableObject {
         duration = track.duration ?? 0
         subtitles = []
         currentSubtitleIndex = nil
-        player.seek(to: CMTime(seconds: position, preferredTimescale: 600))
+        player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         savePlayback(force: true)
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
@@ -206,7 +209,7 @@ final class WorkAudioPlayer: ObservableObject {
             guard status == .failed else { return }
             Task { @MainActor in
                 guard let self, let item, self.player.currentItem === item else { return }
-                self.failPlayback(item.error?.userFacingMessage ?? "音频加载失败，请重试")
+                self.failPlayback(item.error?.userFacingMessage ?? "媒体加载失败，请重试")
             }
         }
         failureObserver = NotificationCenter.default.addObserver(
@@ -216,7 +219,7 @@ final class WorkAudioPlayer: ObservableObject {
             let message = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.userFacingMessage
             Task { @MainActor in
                 guard self.player.currentItem === item else { return }
-                self.failPlayback(message ?? "音频播放失败，请重试")
+                self.failPlayback(message ?? "媒体播放失败，请重试")
             }
         }
 
@@ -309,7 +312,7 @@ final class WorkAudioPlayer: ObservableObject {
     }
 
     fileprivate static func playbackContext(for trackID: String, in nodes: [TrackNode]) -> (queue: [TrackNode], siblings: [TrackNode], index: Int)? {
-        let queue = nodes.filter { $0.isAudio && $0.audioURL != nil }
+        let queue = nodes.playableTracks
         if let index = queue.firstIndex(where: { $0.id == trackID }) {
             return (queue, nodes, index)
         }
@@ -788,6 +791,83 @@ final class WorkAudioPlayer: ObservableObject {
         circleName = "Wisimi"
         ttsSettings.isEnabled = false
         loadCurrent(siblings: queue, autoPlay: false)
+    }
+
+    func prepareDebugVideoPlayback() async throws {
+        try prepareDebugPlayback()
+        let audio = queue[0]
+        let url = try await DebugVideoFixture.make()
+        let json = """
+        [{"type":"other","title":"视频验证 · 完整画面.MP4","hash":"debug-video","duration":8,"mediaDownloadUrl":"\(url.absoluteString)"}]
+        """
+        let video = try JSONDecoder().decode([TrackNode].self, from: Data(json.utf8))[0]
+        queue = [video, audio]
+        currentIndex = 0
+        loadCurrent(siblings: queue, autoPlay: false)
+    }
+
+    func runVideoChecks() async throws {
+        try await prepareDebugVideoPlayback()
+        let video = currentTrack!
+        let originalItem = player.currentItem!
+        let context = Self.playbackContext(for: video.id, in: queue)
+        assert(context?.queue.map(\.id) == ["debug-video", "debug-a"] && context?.index == 0)
+        let asset = originalItem.asset
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        assert(videoTracks.count == 1 && audioTracks.count == 1)
+        playCurrent()
+        for _ in 0..<50 {
+            if playbackState == .playing { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        assert(playbackState == .playing && playbackError == nil)
+        let surface = VideoSurfaceView()
+        surface.playerLayer.player = videoPlayer
+        assert(surface.playerLayer.player === player)
+        surface.playerLayer.player = nil
+        assert(playbackState.wantsPlayback && player.currentItem === originalItem)
+        surface.playerLayer.player = videoPlayer
+        assert(player.currentItem === originalItem)
+        let subtitle = SubtitleLine(start: 2, end: 4, text: "视频字幕")
+        subtitles = [subtitle]
+        pauseCurrent()
+        seek(to: subtitle)
+        try await Task.sleep(for: .milliseconds(500))
+        assert(abs(position - 2) < 0.6 && currentSubtitle?.text == "视频字幕")
+        loadCurrent(siblings: queue, autoPlay: false, resumePosition: 2.5)
+        try await Task.sleep(for: .milliseconds(500))
+        assert(playbackState == .paused && abs(player.currentTime().seconds - 2.5) < 0.1)
+        retryPlayback()
+        assert(currentTrack?.id == video.id && playbackError == nil && playbackState.wantsPlayback)
+        setSleepTimer(.deadline(.now.addingTimeInterval(0.2)))
+        try await Task.sleep(for: .milliseconds(500))
+        assert(playbackState == .paused && sleepTimer == .off)
+        setSleepTimer(.endOfTrack)
+        playCurrent()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            player.seek(to: CMTime(seconds: 7.8, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                continuation.resume()
+            }
+        }
+        for _ in 0..<30 {
+            if sleepTimer == .off { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        assert(currentIndex == 0 && playbackState == .paused && sleepTimer == .off)
+        playCurrent()
+        trackDidEnd()
+        assert(currentIndex == 1 && currentTrack?.isAudio == true)
+        previous()
+        assert(currentTrack?.isVideo == true)
+        let missing = #"[{"type":"video","title":"missing.mp4","hash":"missing-video","mediaStreamUrl":"file:///wisimi-missing-check.mp4"}]"#
+        queue = try JSONDecoder().decode([TrackNode].self, from: Data(missing.utf8))
+        currentIndex = 0
+        loadCurrent(siblings: queue, autoPlay: true)
+        try await Task.sleep(for: .seconds(1))
+        assert(playbackError != nil && playbackState == .paused)
+        try await prepareDebugVideoPlayback()
+        print("MP4 decoding, mixed queue, surface lifecycle, subtitle, retry and sleep timer checks passed")
     }
 
     func runPlaybackChecks() async throws {

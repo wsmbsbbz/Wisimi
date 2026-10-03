@@ -14,7 +14,8 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 按字幕、排序字段和排序方向筛选作品
 - 查看作品详情、封面、评分、时长、销量、标签、声优和音轨目录
 - 长按复制作品标题、标签、声优、社团、文件名和字幕；详情标题支持文字选择
-- 在线播放音频，支持上一首、下一首、进度拖动、后台播放控制和播放进度恢复
+- 在线播放音频与 MP4 视频，同目录混合队列支持上一首、下一首、精确进度拖动、后台播放控制和播放进度恢复
+- MP4 播放器完整按比例显示视频，支持全屏观看及独立字幕入口；返回目录后可继续收听视频声音
 - 播放器区分准备与正在播放，支持音频失败后从当前位置重试
 - 睡眠定时器：15、30、60 分钟后停止或本曲结束停止，同时停止中文旁白
 - 搜索、筛选和模式切换以最新请求为准；刷新失败保留已有内容并提供重试
@@ -48,7 +49,9 @@ xcodebuild -project Wisimi.xcodeproj -scheme Wisimi -configuration Debug -sdk ip
 sh scripts/check-state.sh
 ```
 
-Debug 模拟器中设置 `WISIMI_PLAYBACK_CHECKS=1` 可运行本地音频播放与睡眠定时器集成自检；设置 `WISIMI_WORKS_CHECKS=1` 可运行列表竞态自检。`WISIMI_DEBUG_SCREEN=player` 或 `mini-player` 提供播放器预览，叠加 `WISIMI_SLEEP_TIMER=1` 显示活动定时器；`WISIMI_DEBUG_SCREEN=list-error` 显示刷新失败保留内容的场景。上述入口只存在于 Debug 构建。
+Debug 模拟器中设置 `WISIMI_PLAYBACK_CHECKS=1` 可运行本地音频播放与睡眠定时器集成自检；设置 `WISIMI_WORKS_CHECKS=1` 可运行列表竞态自检。设置 `WISIMI_VIDEO_CHECKS=1` 可运行本机生成的 H.264 + AAC MP4 集成自检（真实解码、混合队列、画面绑定、字幕跳转、重试及定时停止）。`WISIMI_DEBUG_SCREEN=video` 提供本地视频界面验证入口。`WISIMI_DEBUG_SCREEN=player` 或 `mini-player` 提供播放器预览，叠加 `WISIMI_SLEEP_TIMER=1` 显示活动定时器；`WISIMI_DEBUG_SCREEN=list-error` 显示刷新失败保留内容的场景。上述入口只存在于 Debug 构建。
+
+MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用性；加载或解码失败时可以在播放器中重试。
 
 ## Release
 

@@ -8,6 +8,8 @@ cat > "$check_dir/main.swift" <<'SWIFT'
 struct Check {
     @MainActor
     static func main() async {
+        DecodeSelfCheck.run()
+        VideoTrackSelfCheck.run()
         PlaybackStateSelfCheck.run()
         SleepTimerSelfCheck.run()
         await WorksPageStateSelfCheck.run()
@@ -16,6 +18,7 @@ struct Check {
 }
 SWIFT
 swiftc -D DEBUG -parse-as-library -module-cache-path "$check_dir/cache" \
+    Wisimi/Features/Works/VideoTrackSelfCheck.swift \
     Wisimi/Features/Works/PlaybackState.swift Wisimi/Features/Works/SleepTimer.swift \
     Wisimi/Features/Works/WorksPageState.swift Wisimi/Features/Works/WorksModels.swift \
     Wisimi/Features/Works/ASMRClient.swift Wisimi/Features/Works/AuthSession.swift \

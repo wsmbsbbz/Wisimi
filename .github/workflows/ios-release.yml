@@ -83,9 +83,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           IPA="$RUNNER_TEMP/release/Wisimi-${RELEASE_TAG}-unsigned.ipa"
-          NOTES="Unsigned IPA. You must sign it yourself before sideloading."
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          printf '%s\n' '未签名 IPA，需自行签名后侧载。' > "$NOTES_FILE"
+          if [[ -f CHANGELOG.md ]]; then
+            awk -v version="${RELEASE_TAG#v}" '
+              $0 == "## " version { include = 1; next }
+              include && /^## / { exit }
+              include { print }
+            ' CHANGELOG.md >> "$NOTES_FILE"
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$IPA" --clobber
           else
-            gh release create "$RELEASE_TAG" "$IPA" --verify-tag --title "$RELEASE_TAG" --notes "$NOTES"
+            gh release create "$RELEASE_TAG" "$IPA" --verify-tag --title "$RELEASE_TAG" --notes-file "$NOTES_FILE"
           fi

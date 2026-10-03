@@ -4,55 +4,50 @@ struct PlayerView: View {
     @ObservedObject var player: WorkAudioPlayer
     let openWorkDetail: () -> Void
     @State private var isShowingSubtitles = false
+    @State private var isShowingVideoFullscreen = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(spacing: 0) {
-            PlayerMainContent(player: player, isShowingSubtitles: $isShowingSubtitles)
+            Group {
+                if player.currentTrack?.isVideo == true && !isShowingSubtitles {
+                    PlayerVideoContent(player: player, isFullscreen: isShowingVideoFullscreen) {
+                        isShowingVideoFullscreen = true
+                    }
+                } else {
+                    PlayerMainContent(player: player, isShowingSubtitles: $isShowingSubtitles)
+                }
+            }
                 .frame(maxWidth: .infinity)
                 .frame(maxHeight: .infinity)
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            VStack(spacing: 14) {
-                if let message = player.playbackError {
-                    InlineRetryView(message: message, retry: player.retryPlayback)
-                } else if player.playbackState == .preparing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("正在准备播放…").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-                switch player.sleepTimer {
-                case .off:
-                    EmptyView()
-                case .endOfTrack:
-                    Label("本曲结束时停止", systemImage: "moon.zzz.fill")
-                        .font(.caption).foregroundStyle(.secondary)
-                case .deadline(let deadline):
-                    HStack(spacing: 4) {
-                        Image(systemName: "moon.zzz.fill")
-                        Text(timerInterval: Date.now...max(Date.now, deadline), countsDown: true)
-                            .monospacedDigit().fixedSize()
-                        Text("后停止")
-                    }
-                    .font(.caption).foregroundStyle(.secondary)
-                    .accessibilityElement(children: .combine)
-                }
-                PlayerProgress(player: player)
-                PlayerControls(player: player)
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            PlayerTransport(player: player)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { player.stopIfSleepTimerExpired() }
         }
+        .fullScreenCover(isPresented: $isShowingVideoFullscreen) {
+            VideoFullscreenView(player: player)
+        }
+        .onChange(of: player.currentTrack?.isVideo) {
+            if player.currentTrack?.isVideo != true { isShowingVideoFullscreen = false }
+        }
         .navigationTitle("播放器")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isShowingSubtitles.toggle()
+                } label: {
+                    Label(isShowingSubtitles ? "返回画面" : "字幕", systemImage: isShowingSubtitles ? "rectangle.on.rectangle" : "captions.bubble")
+                }
+                .accessibilityIdentifier("player-subtitles")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 SleepTimerMenu(player: player)
             }
@@ -61,6 +56,139 @@ struct PlayerView: View {
                     Label("作品详情", systemImage: "info.circle")
                 }
             }
+        }
+    }
+}
+
+private struct PlayerTransport: View {
+    @ObservedObject var player: WorkAudioPlayer
+
+    var body: some View {
+        VStack(spacing: 14) {
+            if let message = player.playbackError {
+                InlineRetryView(message: message, retry: player.retryPlayback)
+            } else if player.playbackState == .preparing {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("正在准备播放…").font(.caption).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            switch player.sleepTimer {
+            case .off:
+                EmptyView()
+            case .endOfTrack:
+                Label("本曲结束时停止", systemImage: "moon.zzz.fill")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .deadline(let deadline):
+                HStack(spacing: 4) {
+                    Image(systemName: "moon.zzz.fill")
+                    Text(timerInterval: Date.now...max(Date.now, deadline), countsDown: true)
+                        .monospacedDigit().fixedSize()
+                    Text("后停止")
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+            }
+            PlayerProgress(player: player)
+            PlayerControls(player: player)
+        }
+    }
+}
+
+private struct PlayerVideoContent: View {
+    @ObservedObject var player: WorkAudioPlayer
+    let isFullscreen: Bool
+    let openFullscreen: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Group {
+                if isFullscreen {
+                    Color.black
+                } else {
+                    VideoSurface(player: player.videoPlayer)
+                }
+            }
+            .clipShape(.rect(cornerRadius: 16))
+            .overlay(alignment: .bottomTrailing) {
+                Button(action: openFullscreen) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .padding(12)
+                        .background(.ultraThinMaterial, in: .circle)
+                }
+                .buttonStyle(.plain)
+                .padding(12)
+                .accessibilityLabel("全屏观看")
+                .accessibilityIdentifier("video-fullscreen")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Text(player.currentTrack?.title ?? "")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .copyContextMenu(player.currentTrack?.title ?? "", label: "文件名")
+        }
+    }
+}
+
+private struct VideoFullscreenView: View {
+    @ObservedObject var player: WorkAudioPlayer
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isShowingControls = true
+
+    var body: some View {
+        ZStack {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { isShowingControls.toggle() }
+            } label: {
+                VideoSurface(player: player.videoPlayer)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .ignoresSafeArea()
+            .accessibilityLabel(isShowingControls ? "隐藏播放控制" : "显示播放控制")
+
+            VStack(spacing: 12) {
+                HStack {
+                    if isShowingControls {
+                        Text(player.currentTrack?.title ?? "视频")
+                            .font(.headline)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button("完成", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                        .frame(width: 44, height: 44)
+                        .accessibilityIdentifier("video-close-fullscreen")
+                }
+                .padding(.horizontal, 16)
+                .background(isShowingControls ? .black.opacity(0.65) : .clear)
+                Spacer(minLength: 0)
+                VStack(spacing: 12) {
+                    if let subtitle = player.currentSubtitle, player.position < subtitle.end {
+                        Text(subtitle.text)
+                            .font(.subheadline)
+                            .multilineTextAlignment(.center)
+                            .padding(10)
+                            .background(.black.opacity(0.7), in: .rect(cornerRadius: 8))
+                    }
+                    if isShowingControls {
+                        PlayerTransport(player: player)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(isShowingControls ? .black.opacity(0.65) : .clear)
+            }
+        }
+        .background(.black)
+        .preferredColorScheme(.dark)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { player.stopIfSleepTimerExpired() }
         }
     }
 }

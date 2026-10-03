@@ -15,8 +15,8 @@ struct TrackNodeRow: View {
                 Text(track.title)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(2)
-                if track.isAudio {
-                    Text(track.durationText)
+                if track.isPlayable {
+                    Text(track.isVideo ? "视频 · \(track.durationText)" : track.durationText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -29,6 +29,7 @@ struct TrackNodeRow: View {
 
     private var iconName: String {
         if track.isFolder { return "folder" }
+        if track.isVideo { return "video" }
         if track.isAudio { return "play.circle" }
         if track.isSubtitle { return "captions.bubble" }
         if track.isImage { return "photo" }

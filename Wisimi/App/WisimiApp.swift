@@ -5,6 +5,7 @@ struct WisimiApp: App {
     init() {
         #if DEBUG
         DecodeSelfCheck.run()
+        VideoTrackSelfCheck.run()
         AuthSelfCheck.run()
         ASMRClientURLSelfCheck.run()
         PlaybackStateSelfCheck.run()

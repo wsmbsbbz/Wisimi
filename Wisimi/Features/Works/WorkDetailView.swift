@@ -256,7 +256,7 @@ private struct TrackBrowserView: View {
     }
 
     private var playableItems: [TrackNode] {
-        currentItems.filter { $0.isAudio && $0.audioURL != nil }
+        currentItems.playableTracks
     }
 
     private var visiblePath: [TrackPathItem] {
@@ -388,7 +388,7 @@ private struct TrackBrowserNode: View {
     let item: TrackDisplayItem
     let openFolder: (TrackNode) -> Void
     let previewImage: (TrackDisplayItem) -> Void
-    let playAudio: (TrackNode) -> Void
+    let playMedia: (TrackNode) -> Void
 
     var body: some View {
         Group {
@@ -399,9 +399,9 @@ private struct TrackBrowserNode: View {
                     TrackNodeRow(track: item.node)
                 }
                 .buttonStyle(.plain)
-            } else if item.node.isAudio, item.node.audioURL != nil {
+            } else if item.node.isPlayable, item.node.playbackURL != nil {
                 Button {
-                    playAudio(item.node)
+                    playMedia(item.node)
                 } label: {
                     TrackNodeRow(track: item.node)
                 }

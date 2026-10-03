@@ -184,14 +184,17 @@ struct TrackNode: Decodable, Identifiable {
     let size: Int?
 
     var id: String { hash ?? "\(type)-\(title)" }
-    var isAudio: Bool { type == "audio" }
+    var isVideo: Bool { !isFolder && (type == "video" || title.lowercased().hasSuffix(".mp4")) }
+    var isAudio: Bool { type == "audio" && !isVideo }
+    var isPlayable: Bool { isAudio || isVideo }
     var isFolder: Bool { type == "folder" }
     var isSubtitle: Bool { title.lowercased().hasSuffix(".vtt") || title.lowercased().hasSuffix(".lrc") }
     var isImage: Bool {
         [".jpg", ".jpeg", ".png", ".webp", ".gif"].contains { title.lowercased().hasSuffix($0) }
     }
-    var audioURL: URL? {
-        (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
+    var playbackURL: URL? {
+        guard isPlayable else { return nil }
+        return (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
     }
     var imagePreviewURL: URL? {
         guard isImage else { return nil }
@@ -202,6 +205,10 @@ struct TrackNode: Decodable, Identifiable {
 }
 
 extension Array where Element == TrackNode {
+    var playableTracks: [TrackNode] {
+        filter { $0.isPlayable && $0.playbackURL != nil }
+    }
+
     var audioTracks: [TrackNode] {
         flatMap { node in
             var result = node.isAudio ? [node] : []

@@ -38,12 +38,12 @@ struct WorksListView: View {
         #if DEBUG
         let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
         _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
-        if debugScreen == "player" || debugScreen == "mini-player" {
+        if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" {
             try? player.prepareDebugPlayback()
             if ProcessInfo.processInfo.environment["WISIMI_SLEEP_TIMER"] == "1" {
                 player.setSleepTimer(.deadline(.now.addingTimeInterval(1800)))
             }
-            _path = State(initialValue: debugScreen == "player" ? [.player] : [])
+            _path = State(initialValue: debugScreen != "mini-player" ? [.player] : [])
         }
         #endif
     }
@@ -237,6 +237,16 @@ struct WorksListView: View {
             }
             if ProcessInfo.processInfo.environment["WISIMI_WORKS_CHECKS"] == "1" {
                 await WorksPageStateSelfCheck.run()
+                return
+            }
+            if ProcessInfo.processInfo.environment["WISIMI_VIDEO_CHECKS"] == "1" {
+                do { try await player.runVideoChecks() }
+                catch { assertionFailure("Video checks failed: \(error)") }
+                return
+            }
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "video" {
+                do { try await player.prepareDebugVideoPlayback() }
+                catch { assertionFailure("Video preview failed: \(error)") }
                 return
             }
             if ProcessInfo.processInfo.environment["WISIMI_PLAYBACK_CHECKS"] == "1" {
