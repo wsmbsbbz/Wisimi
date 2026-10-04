@@ -27,6 +27,9 @@ jobs:
       - name: Check playback and request state
         run: sh scripts/check-state.sh
 
+      - name: Check downloads and offline files
+        run: sh scripts/check-downloads.sh
+
       - name: Build unsigned iOS app
         run: |
           xcodebuild build \

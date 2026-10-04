@@ -93,6 +93,7 @@ struct WorkDetailView: View {
     let onSearch: (String, String) -> Void
     let onLoginRequired: () -> Void
 
+    @State private var downloads = DownloadStore.shared
     @State private var pageState = WorkDetailPageState()
     @State private var scrollPosition = ScrollPosition()
     @State private var isUpdatingMark = false
@@ -133,6 +134,12 @@ struct WorkDetailView: View {
                                 isPathMenuExpanded: $pageState.isPathMenuExpanded,
                                 player: player
                             )
+                            .id("track-browser")
+                        }
+
+                        if let error = pageState.errorMessage {
+                            Text("更新失败，保留已加载目录：\(error)")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
 
                         if reservesMiniPlayerSpace {
@@ -150,16 +157,41 @@ struct WorkDetailView: View {
         }
         .navigationTitle("作品详情")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(value: WorksRoute.downloads) {
+                    Label("下载管理", systemImage: "arrow.down.circle")
+                }
+            }
+        }
         .task {
             await loadDetail(force: false)
         }
+        #if DEBUG
+        .onChange(of: pageState.loadedWorkID) {
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("download") == true {
+                scrollPosition.scrollTo(id: "track-browser", anchor: .top)
+            }
+        }
+        #endif
         .onChange(of: auth.token) {
             Task { await loadDetail(force: true) }
         }
     }
 
     private func loadDetail(force: Bool) async {
-        guard pageState.beginLoading(workID: workID, force: force) else { return }
+        #if DEBUG
+        if workID == 99999999, ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("download") == true {
+            while downloads.savedWork(id: workID) == nil { try? await Task.sleep(for: .milliseconds(20)) }
+            let saved = downloads.savedWork(id: workID)!
+            pageState.finishLoading(work: saved.work, tracks: saved.tracks, workID: workID)
+            return
+        }
+        #endif
+        if pageState.work == nil, let saved = downloads.savedWork(id: workID) {
+            pageState.finishLoading(work: saved.work, tracks: saved.tracks, workID: workID)
+        }
+        guard pageState.beginLoading(workID: workID, force: force || downloads.savedWork(id: workID) != nil) else { return }
         do {
             async let detail = client.fetchWork(id: workID, token: auth.token)
             async let trackList = client.fetchTracks(workID: workID)
@@ -242,6 +274,24 @@ private struct TrackBrowserView: View {
     @Binding var isPathMenuExpanded: Bool
     let player: WorkAudioPlayer
     @State private var imagePreview: TrackImagePreview?
+    @State private var downloads = DownloadStore.shared
+    @State private var isSelecting = false
+    @State private var selection: Set<String> = []
+    @State private var submissionMessage: String?
+
+    private var selectedFiles: [TrackNode] {
+        tracks.downloadableFiles.filter { selection.contains(DownloadStore.key(for: $0, workID: work.id)) }
+    }
+
+    private func keys(for nodes: [TrackNode]) -> Set<String> {
+        Set(nodes.downloadableFiles.map { DownloadStore.key(for: $0, workID: work.id) })
+    }
+
+    private func toggleSelection(_ nodes: [TrackNode]) {
+        let ids = keys(for: nodes)
+        if ids.isSubset(of: selection) { selection.subtract(ids) } else { selection.formUnion(ids) }
+    }
+
 
     private var isSingleRootFolder: Bool {
         tracks.count == 1 && tracks[0].isFolder
@@ -285,6 +335,15 @@ private struct TrackBrowserView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            if isSelecting {
+                selectionControls
+            }
+            if let submissionMessage {
+                Text(submissionMessage).font(.caption).foregroundStyle(.secondary)
+            }
+            if let message = downloads.message {
+                Text(message).font(.caption).foregroundStyle(.red)
+            }
 
             if isPathMenuExpanded {
                 pathStack
@@ -297,16 +356,48 @@ private struct TrackBrowserView: View {
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(itemRows) { item in
-                        TrackBrowserNode(
-                            item: item,
-                            openFolder: openFolder,
-                            previewImage: previewImage
-                        ) { node in
-                            player.play(queue: playableItems, start: node, siblings: currentItems, work: work)
+                        HStack(spacing: 8) {
+                            if isSelecting {
+                                let ids = keys(for: [item.node])
+                                Button {
+                                    toggleSelection([item.node])
+                                } label: {
+                                    Image(systemName: !ids.isEmpty && ids.isSubset(of: selection) ? "checkmark.circle.fill" : "circle")
+                                        .font(.title3)
+                                        .frame(width: 44, height: 44)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(ids.isEmpty)
+                                .accessibilityLabel("选择 \(item.node.title)")
+                                .accessibilityValue(ids.isSubset(of: selection) ? "已选中" : "未选中")
+                            }
+                            TrackBrowserNode(
+                                item: item,
+                                workID: work.id,
+                                openFolder: openFolder,
+                                previewImage: { item in
+                                    if isSelecting { toggleSelection([item.node]) }
+                                    else { previewImage(item) }
+                                }
+                            ) { node in
+                                if isSelecting {
+                                    toggleSelection([node])
+                                } else {
+                                    player.play(queue: playableItems, start: node, siblings: currentItems, work: work)
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+        .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "download-selection" {
+                isSelecting = true
+                selection = keys(for: currentItems)
+            }
+            #endif
         }
         .sheet(item: $imagePreview) { preview in
             ImagePreviewSheet(preview: preview)
@@ -331,9 +422,42 @@ private struct TrackBrowserView: View {
 
             Spacer()
 
-            Text("\(currentItems.count)")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+            Button(isSelecting ? "完成" : "选择") {
+                isSelecting.toggle()
+                if !isSelecting { selection.removeAll() }
+                submissionMessage = nil
+            }
+            .font(.subheadline)
+            .disabled(tracks.downloadableFiles.isEmpty)
+        }
+    }
+
+    private var selectionControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button(keys(for: currentItems).isSubset(of: selection) ? "取消当前文件夹全选" : "全选当前文件夹") {
+                    toggleSelection(currentItems)
+                }
+                .disabled(currentItems.downloadableFiles.isEmpty)
+                Spacer()
+                Button("清空") { selection.removeAll() }.disabled(selection.isEmpty)
+            }
+            .font(.subheadline)
+            Text("已选 \(selectedFiles.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: selectedFiles.reduce(0) { $0 + Int64($1.size ?? 0) }, countStyle: .file))\(selectedFiles.contains { $0.size == nil } ? "（部分大小未知）" : "")")
+                .font(.caption).foregroundStyle(.secondary)
+            Button {
+                let files = DownloadSelection.includingSubtitles(selectedFiles, in: tracks, workID: work.id)
+                if downloads.enqueue(files, work: work, tracks: tracks) {
+                    submissionMessage = "已加入下载，匹配字幕会一并缓存。可在下载管理中查看进度。"
+                    selection.removeAll()
+                    isSelecting = false
+                }
+            } label: {
+                Label("下载所选文件", systemImage: "arrow.down.to.line")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(selection.isEmpty || !downloads.isReady)
         }
     }
 
@@ -375,7 +499,7 @@ private struct TrackBrowserView: View {
     }
 
     private func previewImage(_ item: TrackDisplayItem) {
-        guard let url = item.node.imagePreviewURL else { return }
+        guard let url = downloads.localURL(for: item.node, workID: work.id) ?? item.node.imagePreviewURL else { return }
         imagePreview = TrackImagePreview(id: item.id, title: item.node.title, url: url)
     }
 
@@ -386,6 +510,7 @@ private struct TrackBrowserView: View {
 
 private struct TrackBrowserNode: View {
     let item: TrackDisplayItem
+    let workID: Int
     let openFolder: (TrackNode) -> Void
     let previewImage: (TrackDisplayItem) -> Void
     let playMedia: (TrackNode) -> Void
@@ -396,25 +521,25 @@ private struct TrackBrowserNode: View {
                 Button {
                     openFolder(item.node)
                 } label: {
-                    TrackNodeRow(track: item.node)
+                    TrackNodeRow(track: item.node, workID: workID)
                 }
                 .buttonStyle(.plain)
             } else if item.node.isPlayable, item.node.playbackURL != nil {
                 Button {
                     playMedia(item.node)
                 } label: {
-                    TrackNodeRow(track: item.node)
+                    TrackNodeRow(track: item.node, workID: workID)
                 }
                 .buttonStyle(.plain)
             } else if item.node.imagePreviewURL != nil {
                 Button {
                     previewImage(item)
                 } label: {
-                    TrackNodeRow(track: item.node)
+                    TrackNodeRow(track: item.node, workID: workID)
                 }
                 .buttonStyle(.plain)
             } else {
-                TrackNodeRow(track: item.node)
+                TrackNodeRow(track: item.node, workID: workID)
             }
         }
         .copyContextMenu(item.node.title, label: "文件名")
@@ -473,7 +598,9 @@ private struct ZoomableRemoteImage: View {
         image = nil
         didFail = false
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let data: Data
+            if url.isFileURL { data = try Data(contentsOf: url) }
+            else { data = try await URLSession.shared.data(from: url).0 }
             guard let loadedImage = UIImage(data: data) else {
                 didFail = true
                 return

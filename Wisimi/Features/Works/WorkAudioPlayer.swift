@@ -175,7 +175,7 @@ final class WorkAudioPlayer: ObservableObject {
 
     private func loadCurrent(siblings: [TrackNode], autoPlay: Bool, resumePosition: TimeInterval = 0) {
         loadTask?.cancel()
-        guard let track = currentTrack, let url = track.playbackURL else { return }
+        guard let track = currentTrack, let url = workID.flatMap({ DownloadStore.shared.localURL(for: track, workID: $0) }) ?? track.playbackURL else { return }
 
         endObserver.map(NotificationCenter.default.removeObserver)
         failureObserver.map(NotificationCenter.default.removeObserver)
@@ -224,8 +224,9 @@ final class WorkAudioPlayer: ObservableObject {
         }
 
         loadTask = Task { [client] in
-            let subtitle = Self.matchSubtitle(for: track, in: siblings)
-            guard let url = subtitle?.downloadURL, let content = try? await client.fetchText(url), !Task.isCancelled else { return }
+            let subtitle = siblings.matchingSubtitle(for: track)
+            let local = subtitle.flatMap { subtitle in self.workID.flatMap { DownloadStore.shared.localURL(for: subtitle, workID: $0) } }
+            guard let url = local ?? subtitle?.downloadSourceURL, let content = try? await client.fetchText(url), !Task.isCancelled else { return }
             let lines = Self.parseSubtitles(content)
             await MainActor.run {
                 guard self.currentTrack?.id == track.id else { return }
@@ -277,6 +278,27 @@ final class WorkAudioPlayer: ObservableObject {
         subtitles.lastIndex { position >= $0.start }
     }
 
+    #if DEBUG
+    func runDownloadedMediaCheck() async throws {
+        try await DownloadStore.shared.prepareDebugDownloads()
+        let saved = DownloadStore.shared.savedWork(id: 99999999)!
+        let video = saved.tracks[0]
+        let localURL = DownloadStore.shared.localURL(for: video, workID: saved.id)!
+        ttsSettings.isEnabled = false
+        play(queue: saved.tracks.playableTracks, start: video, siblings: saved.tracks, work: saved.work)
+        for _ in 0..<200 {
+            if player.currentItem?.status == .readyToPlay && !subtitles.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        assert((player.currentItem?.asset as? AVURLAsset)?.url == localURL)
+        assert(player.currentItem?.status == .readyToPlay)
+        assert(subtitles.first?.text == "这是一段已经缓存的字幕。")
+        assert(playbackError == nil)
+        pauseCurrent()
+        NSLog("Downloaded media integration checks passed: local MP4 decoding and cached subtitles")
+    }
+    #endif
+
     private func savePlayback(force: Bool = false) {
         guard let workID, let currentTrack else { return }
         guard force || abs(position - lastSavedPosition) >= 5 || lastSavedPosition < 0 else { return }
@@ -296,11 +318,21 @@ final class WorkAudioPlayer: ObservableObject {
     private func restorePlayback() async {
         guard let data = UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey),
               let snapshot = try? JSONDecoder().decode(PlaybackSnapshot.self, from: data),
-              let detail = try? await client.fetchWork(id: snapshot.workID),
-              let tracks = try? await client.fetchTracks(workID: snapshot.workID),
+              currentTrack == nil else { return }
+        let saved = DownloadStore.shared.savedWork(id: snapshot.workID)
+        let detail: WorkDetail
+        let tracks: [TrackNode]
+        if let saved {
+            detail = saved.work
+            tracks = saved.tracks
+        } else {
+            guard let onlineDetail = try? await client.fetchWork(id: snapshot.workID),
+                  let onlineTracks = try? await client.fetchTracks(workID: snapshot.workID) else { return }
+            detail = onlineDetail
+            tracks = onlineTracks
+        }
+        guard currentTrack == nil,
               let context = Self.playbackContext(for: snapshot.trackID, in: tracks) else { return }
-
-        guard currentTrack == nil else { return }
         queue = context.queue
         siblings = context.siblings
         currentIndex = context.index
@@ -942,16 +974,6 @@ final class WorkAudioPlayer: ObservableObject {
         print("Playback and sleep timer integration checks passed")
     }
     #endif
-
-    private static func matchSubtitle(for audio: TrackNode, in siblings: [TrackNode]) -> TrackNode? {
-        let base = audio.title.deletingPathExtension.lowercased()
-        let subtitleFiles = siblings.filter(\.isSubtitle)
-        return subtitleFiles.first { $0.title.lowercased() == "\(base).vtt" || $0.title.lowercased() == "\(base).lrc" }
-            ?? subtitleFiles.first { file in
-                let subtitleBase = file.title.deletingPathExtension.lowercased()
-                return subtitleBase.hasPrefix(base) || base.hasPrefix(subtitleBase)
-            }
-    }
 
     fileprivate static func parseSubtitles(_ content: String) -> [SubtitleLine] {
         content.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("WEBVTT")

@@ -14,6 +14,9 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 按字幕、排序字段和排序方向筛选作品
 - 查看作品详情、封面、评分、时长、销量、标签、声优和音轨目录
 - 长按复制作品标题、标签、声优、社团、文件名和字幕；详情标题支持文字选择
+- 文件多选与递归全选当前文件夹，批量下载音视频、匹配字幕、图片及其他目录文件
+- 下载管理：查看状态、进度和占用空间，暂停、继续、重试与确认删除；目录直接标识已缓存文件
+- 从下载管理打开本地作品目录，断网可播放已缓存音视频并读取本地字幕、查看已缓存图片
 - 在线播放音频与 MP4 视频，同目录混合队列支持上一首、下一首、精确进度拖动、后台播放控制和播放进度恢复
 - MP4 播放器完整按比例显示视频，支持全屏观看及独立字幕入口；返回目录后可继续收听视频声音
 - 播放器区分准备与正在播放，支持音频失败后从当前位置重试
@@ -47,9 +50,12 @@ xcodebuild -project Wisimi.xcodeproj -scheme Wisimi -configuration Debug -sdk ip
 
 ```sh
 sh scripts/check-state.sh
+sh scripts/check-downloads.sh
 ```
 
 Debug 模拟器中设置 `WISIMI_PLAYBACK_CHECKS=1` 可运行本地音频播放与睡眠定时器集成自检；设置 `WISIMI_WORKS_CHECKS=1` 可运行列表竞态自检。设置 `WISIMI_VIDEO_CHECKS=1` 可运行本机生成的 H.264 + AAC MP4 集成自检（真实解码、混合队列、画面绑定、字幕跳转、重试及定时停止）。`WISIMI_DEBUG_SCREEN=video` 提供本地视频界面验证入口。`WISIMI_DEBUG_SCREEN=player` 或 `mini-player` 提供播放器预览，叠加 `WISIMI_SLEEP_TIMER=1` 显示活动定时器；`WISIMI_DEBUG_SCREEN=list-error` 显示刷新失败保留内容的场景。上述入口只存在于 Debug 构建。
+
+`check-downloads.sh` 使用本机 HTTP 服务验证嵌套目录、字幕附带、去重、响应与完整性校验、暂停继续、失败重试、持久化恢复及删除。Debug 模拟器中设置 `WISIMI_DOWNLOAD_PLAYBACK_CHECKS=1` 验证本地 MP4 真实解码与本地字幕；`WISIMI_DEBUG_SCREEN=downloads`、`download-detail`、`download-selection` 提供下载状态与多选布局验证入口。
 
 MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用性；加载或解码失败时可以在播放器中重试。
 
@@ -65,6 +71,9 @@ MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用�
 - 登录 asmr.one 后的 token 只保存在本机 Keychain 中，不会提交到仓库，也不会由 Wisimi 上传到其他服务。
 - 用户填写的 OpenRouter Token 使用 `WhenUnlockedThisDeviceOnly` 策略保存在本机 Keychain，不参与同步，也不会写入偏好设置、缓存名称或日志。
 - 播放进度、TTS 设置和 TTS 临时缓存保存在本机。
+- 用户下载保存在本机 Application Support，排除 iCloud 备份；不会随临时缓存自动清理，可在下载管理中删除。下载管理的占用统计针对已完成文件，进行中的任务还可能占用系统临时空间。
+- 下载由 iOS 后台调度，可使用蜂窝网络。暂停与继续使用系统任务；用户强制退出可能取消后台下载，重新打开后可重试。后台处理时机与能否续传由系统和服务器决定。
+- 离线支持已保存的作品目录与成功下载的文件；未缓存的媒体仍需联网，生成新的中文旁白仍依赖在线 TTS 服务。
 
 ## Third-party Services
 

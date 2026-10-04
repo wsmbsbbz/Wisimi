@@ -179,6 +179,7 @@ struct ASMRClient {
     }
 
     func fetchText(_ url: URL) async throws -> String {
+        if url.isFileURL { return try String(contentsOf: url, encoding: .utf8) }
         let data = try await data(for: request(url: url))
         return String(decoding: data, as: UTF8.self)
     }
@@ -348,7 +349,7 @@ struct ReviewFilter: Equatable, Sendable {
     nonisolated static let `default` = ReviewFilter()
 }
 
-enum ReviewStatus: String, CaseIterable, Identifiable, Sendable {
+enum ReviewStatus: String, Codable, CaseIterable, Identifiable, Sendable {
     case marked
     case listening
     case listened

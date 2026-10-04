@@ -120,7 +120,7 @@ struct WorkSummary: Decodable, Identifiable {
     }
 }
 
-struct WorkDetail: Decodable {
+struct WorkDetail: Codable {
     let id: Int
     let title: String
     let name: String
@@ -168,12 +168,12 @@ struct WorkDetail: Decodable {
     }
 }
 
-struct NameItem: Decodable, Identifiable {
+struct NameItem: Codable, Identifiable {
     let id: FlexibleID
     let name: String
 }
 
-struct TrackNode: Decodable, Identifiable {
+struct TrackNode: Codable, Identifiable {
     let type: String
     let title: String
     let hash: String?
@@ -201,10 +201,30 @@ struct TrackNode: Decodable, Identifiable {
         return (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
     }
     var downloadURL: URL? { mediaDownloadUrl.flatMap(URL.init(string:)) }
+    var downloadSourceURL: URL? {
+        guard !isFolder else { return nil }
+        return (mediaDownloadUrl ?? mediaStreamUrl).flatMap(URL.init(string:))
+    }
     var durationText: String { duration.formattedDuration }
 }
 
 extension Array where Element == TrackNode {
+    func matchingSubtitle(for audio: TrackNode) -> TrackNode? {
+        let base = (audio.title as NSString).deletingPathExtension.lowercased()
+        let subtitleFiles = filter(\.isSubtitle)
+        return subtitleFiles.first { $0.title.lowercased() == "\(base).vtt" || $0.title.lowercased() == "\(base).lrc" }
+            ?? subtitleFiles.first { file in
+                let subtitleBase = (file.title as NSString).deletingPathExtension.lowercased()
+                return subtitleBase.hasPrefix(base) || base.hasPrefix(subtitleBase)
+            }
+    }
+
+    var downloadableFiles: [TrackNode] {
+        flatMap { node in
+            node.isFolder ? (node.children ?? []).downloadableFiles : (node.downloadSourceURL == nil ? [] : [node])
+        }
+    }
+
     var playableTracks: [TrackNode] {
         filter { $0.isPlayable && $0.playbackURL != nil }
     }
@@ -222,8 +242,13 @@ extension Array where Element == TrackNode {
     }
 }
 
-struct FlexibleID: Decodable, Hashable {
+struct FlexibleID: Codable, Hashable {
     let value: String
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()

@@ -38,6 +38,8 @@ struct WorksListView: View {
         #if DEBUG
         let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
         _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
+        if debugScreen == "downloads" { _path = State(initialValue: [.downloads]) }
+        if debugScreen == "download-detail" || debugScreen == "download-selection" { _path = State(initialValue: [.detail(99999999)]) }
         if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" {
             try? player.prepareDebugPlayback()
             if ProcessInfo.processInfo.environment["WISIMI_SLEEP_TIMER"] == "1" {
@@ -154,6 +156,13 @@ struct WorksListView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        path.append(.downloads)
+                    } label: {
+                        Label("下载管理", systemImage: "arrow.down.circle")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     if isLoading && !works.isEmpty {
                         ProgressView()
                     }
@@ -171,6 +180,8 @@ struct WorksListView: View {
                         onSearch: search,
                         onLoginRequired: { isLoginPresented = true }
                     )
+                case .downloads:
+                    DownloadsView { path.append(.detail($0)) }
                 case .player:
                     PlayerView(player: player, openWorkDetail: openPlayingWorkDetail)
                 }
@@ -227,6 +238,16 @@ struct WorksListView: View {
         }
         .task {
             #if DEBUG
+            if ProcessInfo.processInfo.environment["WISIMI_DOWNLOAD_PLAYBACK_CHECKS"] == "1" {
+                do { try await player.runDownloadedMediaCheck() }
+                catch { assertionFailure("Downloaded media check failed: \(error)") }
+                return
+            }
+            if let screen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"], screen.hasPrefix("download") {
+                do { try await DownloadStore.shared.prepareDebugDownloads() }
+                catch { DownloadStore.shared.message = error.localizedDescription }
+                return
+            }
             if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "list-error" {
                 let json = #"{"works":[{"id":1,"title":"晚安 · 轻声陪伴与耳边细语","name":"Wisimi","has_subtitle":true,"tags":[],"vas":[]}],"pagination":{"currentPage":1,"pageSize":12,"totalCount":36}}"#
                 await pageState.load(page: 1) {
@@ -396,8 +417,9 @@ struct WorksListView: View {
     }
 }
 
-private enum WorksRoute: Hashable {
+enum WorksRoute: Hashable {
     case detail(Int)
+    case downloads
     case player
 
     static func replacingPlayer(withDetail workID: Int, in path: [Self]) -> [Self] {
