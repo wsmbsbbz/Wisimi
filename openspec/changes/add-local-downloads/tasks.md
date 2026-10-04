@@ -14,4 +14,11 @@
 ## 3. 集成与发布
 
 - [x] 3.1 运行已有状态自检及 Debug/Release 构建，记录结果并通过 OpenSpec 严格校验。
-- [ ] 3.2 更新 1.3.0 版本与更新记录，提交并推送 main 和 v1.3.0，确认远端提交与发布产物。
+- [x] 3.2 更新 1.3.0 版本与更新记录，提交并推送 main 和 v1.3.0，确认远端提交与发布产物。
+
+## 验证结果
+
+- `sh scripts/check-state.sh` 与 `sh scripts/check-downloads.sh` 通过；额外延迟 HTTP 服务启动 12 秒的自检通过。
+- Debug 模拟器与 Release 真机目标构建通过；iPhone 17e 和 iPad mini 目录多选及状态布局检查通过，本地 MP4 真实解码与缓存字幕集成自检通过。
+- [远端 CI](https://github.com/wsmbsbbz/Wisimi/actions/runs/37177434772) 与 [Release 工作流](https://github.com/wsmbsbbz/Wisimi/actions/runs/37177562486) 均成功。
+- [v1.3.0](https://github.com/wsmbsbbz/Wisimi/releases/tag/v1.3.0) 已发布；远端下载 IPA 校验压缩包及版本 1.3.0 / build 6 通过，SHA256 为 `01386b2b05837aaff5cf35036fcaa89d24db0905df6544a1b8919dcc37b0de8f`。
