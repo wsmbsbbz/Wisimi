@@ -25,6 +25,61 @@ enum DownloadSelfCheck {
         }]
         let folder = try JSONDecoder().decode(TrackNode.self, from: JSONSerialization.data(withJSONObject: folderJSON))
         let nodes = [folder]
+        // Presentation is derived from selected files, not the entire work directory.
+        func entry(_ state: DownloadEntry.State, received: Int64, expected: Int64, workID: Int = 42) -> DownloadEntry {
+            DownloadEntry(id: UUID(), key: UUID().uuidString, workID: workID, track: audio,
+                          filename: "test.mp3", state: state, received: received, expected: expected)
+        }
+        let complete = entry(.completed, received: 100, expected: 100)
+        let active = entry(.downloading, received: 50, expected: 300)
+        let paused = entry(.paused, received: 0, expected: 100)
+        let failedEntry = entry(.failed, received: 0, expected: 100)
+        let selected = [complete, active, paused, failedEntry]
+        let summary = DownloadSummary(entries: selected)
+        assert(summary.completed == 1 && summary.hasUnfinished)
+        assert(summary.completionText == "已下载 1/4 个所选文件")
+        assert(summary.progress == 0.25)
+        assert(summary.count(.paused) == 1 && summary.count(.failed) == 1)
+        assert(DownloadSummary(entries: [entry(.downloading, received: 10, expected: 0)]).progress == nil)
+        assert(DownloadSummary(entries: []).progress == nil)
+        assert(entry(.downloading, received: 0, expected: 100).displayStatus == "等待传输")
+        assert(active.displayStatus == "下载中")
+        assert(paused.displayStatus == "已暂停")
+        let saved = DownloadedWork(work: work, tracks: nodes)
+        // Deliver a sub-256 KB callback directly: scheduler/network speed cannot invalidate this regression check.
+        let progressDirectory = directory.appendingPathComponent("progress-check")
+        try FileManager.default.createDirectory(at: progressDirectory, withIntermediateDirectories: true)
+        let progressEntry = entry(.paused, received: 0, expected: 1024)
+        let progressManifest: [String: Any] = [
+            "entries": [try JSONSerialization.jsonObject(with: JSONEncoder().encode(progressEntry))],
+            "works": [try JSONSerialization.jsonObject(with: JSONEncoder().encode(saved))]
+        ]
+        try JSONSerialization.data(withJSONObject: progressManifest)
+            .write(to: progressDirectory.appendingPathComponent("index.json"))
+        let progressStore = DownloadStore(directory: progressDirectory, configuration: .ephemeral)
+        defer { progressStore.closeForCheck() }
+        try await wait { progressStore.isReady }
+        let callbackSession = URLSession(configuration: .ephemeral)
+        defer { callbackSession.invalidateAndCancel() }
+        let callbackTask = callbackSession.downloadTask(with: baseURL)
+        callbackTask.taskDescription = progressEntry.id.uuidString
+        progressStore.urlSession(callbackSession, downloadTask: callbackTask, didWriteData: 64,
+                                 totalBytesWritten: 64, totalBytesExpectedToWrite: 1024)
+        try await wait { progressStore.entries.first?.received == 64 }
+        progressStore.urlSession(callbackSession, downloadTask: callbackTask, didWriteData: 960,
+                                 totalBytesWritten: 1024, totalBytesExpectedToWrite: 1024)
+        try await wait { progressStore.entries.first?.received == 1024 }
+        let visibleCompleted = DownloadWorkGroup.make(works: [saved], entries: selected, filter: .completed)
+        assert(visibleCompleted.count == 1 && visibleCompleted[0].visibleEntries.map(\.id) == [complete.id])
+        assert(visibleCompleted[0].entries.count == 4) // Menu scope remains the whole work.
+        assert(DownloadWorkGroup.make(works: [saved], entries: selected, filter: .unfinished)[0].visibleEntries.count == 3)
+        assert(DownloadWorkGroup.make(works: [saved], entries: [complete], filter: .unfinished).isEmpty)
+        let otherWork = try JSONDecoder().decode(WorkDetail.self, from: Data(workJSON.replacingOccurrences(of: "42", with: "99").utf8))
+        let otherSaved = DownloadedWork(work: otherWork, tracks: nodes)
+        let otherComplete = entry(.completed, received: 100, expected: 100, workID: 99)
+        assert(DownloadWorkGroup.make(works: [otherSaved, saved], entries: selected + [otherComplete], filter: .all).map(\.id) == [42, 99])
+        let updated = entry(.downloading, received: 200, expected: 300)
+        assert(DownloadWorkGroup.make(works: [otherSaved, saved], entries: [complete, updated, otherComplete], filter: .all).map(\.id) == [42, 99])
         assert(nodes.downloadableFiles.count == 3)
         assert([folder].downloadableFiles.map(\.title) == ["01.mp3", "01.vtt", "cover.png"])
         assert(DownloadSelection.includingSubtitles([audio], in: nodes, workID: 42).map(\.title) == ["01.mp3", "01.vtt"])
@@ -86,7 +141,7 @@ enum DownloadSelfCheck {
         try await Task.sleep(for: .milliseconds(100))
         assert(reloaded.entries.isEmpty && reloaded.works.isEmpty && reloaded.cachedBytes == 0)
         let remainingFiles = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-        assert(remainingFiles == ["index.json"])
+        assert(Set(remainingFiles) == ["index.json", "progress-check"])
         let brokenDirectory = directory.appendingPathComponent("broken")
         let broken = DownloadStore(directory: brokenDirectory, configuration: .ephemeral)
         defer { broken.closeForCheck() }

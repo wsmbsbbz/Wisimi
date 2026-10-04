@@ -53,7 +53,7 @@ import Foundation
 }
 SWIFT
 swiftc -D DEBUG -parse-as-library -module-cache-path "$check_dir/cache" \
-    Wisimi/Features/Works/DownloadStore.swift Wisimi/Features/Works/DownloadSelfCheck.swift \
+    Wisimi/Features/Works/DownloadStore.swift Wisimi/Features/Works/DownloadPresentation.swift Wisimi/Features/Works/DownloadSelfCheck.swift \
     Wisimi/Features/Works/WorksModels.swift Wisimi/Features/Works/ASMRClient.swift \
     Wisimi/Features/Works/AuthSession.swift Wisimi/Shared/Extensions/DurationFormat.swift \
     Wisimi/Shared/Storage/KeychainItem.swift \

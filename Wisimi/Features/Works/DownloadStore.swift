@@ -55,8 +55,10 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
     private(set) var entries: [DownloadEntry] = []
     private(set) var works: [DownloadedWork] = []
     private(set) var isReady = false
+    private(set) var cachedBytes: Int64 = 0
     var message: String?
     @ObservationIgnored var backgroundCompletion: (() -> Void)?
+    @ObservationIgnored private var lastProgressUpdate: [UUID: TimeInterval] = [:]
     @ObservationIgnored private var tasks: [UUID: URLSessionDownloadTask] = [:]
     @ObservationIgnored private var session: URLSession!
     @ObservationIgnored private let directory: URL
@@ -114,8 +116,8 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    var cachedBytes: Int64 {
-        entries.reduce(0) { total, entry in
+    private func refreshCachedBytes() {
+        cachedBytes = entries.reduce(0) { total, entry in
             guard entry.state == .completed,
                   FileManager.default.fileExists(atPath: directory.appendingPathComponent(entry.filename).path) else { return total }
             return total + entry.received
@@ -154,6 +156,7 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
             works = oldWorks
             return false
         }
+        refreshCachedBytes()
         for entry in added { start(entry) }
         return true
     }
@@ -185,6 +188,7 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
         var removed: Set<UUID> = []
         for entry in entries where ids.contains(entry.id) {
             tasks.removeValue(forKey: entry.id)?.cancel()
+            lastProgressUpdate.removeValue(forKey: entry.id)
             let url = directory.appendingPathComponent(entry.filename)
             do {
                 if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
@@ -196,6 +200,7 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
         entries.removeAll { removed.contains($0.id) }
         works.removeAll { work in !entries.contains { $0.workID == work.id } }
         persist()
+        refreshCachedBytes()
     }
 
     @discardableResult
@@ -216,6 +221,7 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
             finish(entry.id, staged: nil, error: "不支持的下载地址")
             return
         }
+        lastProgressUpdate.removeValue(forKey: entry.id)
         let task = session.downloadTask(with: url)
         task.taskDescription = entry.id.uuidString
         tasks[entry.id] = task
@@ -252,14 +258,17 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
             }
         }
         persist()
+        refreshCachedBytes()
         isReady = true
     }
 
     private func finish(_ id: UUID, staged: URL?, error: String?) {
         defer { if let staged { try? FileManager.default.removeItem(at: staged) } }
         tasks.removeValue(forKey: id)
+        lastProgressUpdate.removeValue(forKey: id)
         guard let index = entries.firstIndex(where: { $0.id == id }),
               entries[index].state == .downloading || entries[index].state == .paused else { return }
+        defer { refreshCachedBytes() }
         do {
             if let error { throw DownloadError(message: error) }
             guard let staged else { throw DownloadError(message: "没有收到文件") }
@@ -295,8 +304,10 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
         Task { @MainActor in
             guard let index = self.entries.firstIndex(where: { $0.id == id }),
                   self.entries[index].state == .downloading || self.entries[index].state == .paused else { return }
-            let old = self.entries[index].received
-            guard totalBytesWritten - old >= 256_000 || totalBytesWritten == totalBytesExpectedToWrite else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let isComplete = totalBytesExpectedToWrite > 0 && totalBytesWritten == totalBytesExpectedToWrite
+            if let last = self.lastProgressUpdate[id], !isComplete, now - last < 0.25 { return }
+            self.lastProgressUpdate[id] = now
             self.entries[index].received = totalBytesWritten
             if totalBytesExpectedToWrite > 0 { self.entries[index].expected = totalBytesExpectedToWrite }
         }
@@ -336,26 +347,29 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
     #if DEBUG
     func closeForCheck() { session.invalidateAndCancel() }
     #if os(iOS)
-    func seedDebugEntries(work: WorkDetail, tracks: [TrackNode], files: [URL]) throws {
+    func seedDebugEntries(work: WorkDetail, tracks: [TrackNode], files: [URL], states: [DownloadEntry.State]? = nil) throws {
         remove(Set(entries.filter { $0.workID == work.id }.map(\.id)))
         works.removeAll { $0.id == work.id }
         works.append(DownloadedWork(work: work, tracks: tracks))
-        for (index, track) in tracks.prefix(5).enumerated() {
+        let fixtureStates = states ?? [.completed, .completed, .downloading, .paused, .failed]
+        for (index, track) in tracks.downloadableFiles.prefix(fixtureStates.count).enumerated() {
             let id = UUID()
             let filename = id.uuidString + "." + (track.title as NSString).pathExtension
             var entry = DownloadEntry(id: id, key: Self.key(for: track, workID: work.id), workID: work.id,
                                       track: track, filename: filename,
-                                      state: index < 2 ? .completed : index == 2 ? .downloading : index == 3 ? .paused : .failed,
-                                      received: 8_000_000, expected: 20_000_000)
+                                      state: fixtureStates[index],
+                                      received: states == nil ? 8_000_000 : 0,
+                                      expected: states == nil ? 20_000_000 : Int64(track.size ?? 0))
             if index < files.count {
                 try FileManager.default.copyItem(at: files[index], to: directory.appendingPathComponent(filename))
                 entry.received = Int64(try files[index].resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
                 entry.expected = entry.received
             }
-            if index == 4 { entry.error = "网络连接已断开，请重试" }
+            if entry.state == .failed { entry.error = "网络连接已断开，请重试" }
             entries.append(entry)
         }
         persist()
+        refreshCachedBytes()
     }
     #endif
     #endif

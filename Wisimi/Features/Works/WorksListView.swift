@@ -35,7 +35,12 @@ struct WorksListView: View {
         #if DEBUG
         let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
         _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
-        if debugScreen == "downloads" { _path = State(initialValue: [.downloads]) }
+        if debugScreen?.hasPrefix("downloads") == true {
+            _path = State(initialValue: [.downloads])
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_DOWNLOAD_MINIPLAYER"] == "1" {
+                try? player.prepareDebugPlayback()
+            }
+        }
         if debugScreen == "download-detail" || debugScreen == "download-selection" { _path = State(initialValue: [.detail(99999999)]) }
         if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" {
             try? player.prepareDebugPlayback()

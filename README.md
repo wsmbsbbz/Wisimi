@@ -15,7 +15,7 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 查看作品详情、封面、评分、时长、销量、标签、声优和音轨目录
 - 长按复制作品标题、标签、声优、社团、文件名和字幕；详情标题支持文字选择
 - 文件多选与递归全选当前文件夹，批量下载音视频、匹配字幕、图片及其他目录文件
-- 下载管理：查看状态、进度和占用空间，暂停、继续、重试与确认删除；目录直接标识已缓存文件
+- 下载管理：按作品展示封面、所选文件完成数量与汇总进度，支持全部/未完成/已下载筛选和页内展开；可管理单文件、整部作品及全部任务，删除前确认；目录直接标识已缓存文件
 - 从下载管理打开本地作品目录，断网可播放已缓存音视频并读取本地字幕、查看已缓存图片
 - 在线播放音频与 MP4 视频，同目录混合队列支持上一首、下一首、精确进度拖动、后台播放控制和播放进度恢复
 - MP4 播放器完整按比例显示视频，支持全屏观看及独立字幕入口；返回目录后可继续收听视频声音
@@ -58,7 +58,7 @@ bash scripts/check-refactor.sh
 
 Debug 模拟器中设置 `WISIMI_PLAYBACK_CHECKS=1` 可运行本地音频播放与睡眠定时器集成自检；设置 `WISIMI_WORKS_CHECKS=1` 可运行列表竞态自检。设置 `WISIMI_VIDEO_CHECKS=1` 可运行本机生成的 H.264 + AAC MP4 集成自检（真实解码、混合队列、画面绑定、字幕跳转、重试及定时停止）。`WISIMI_DEBUG_SCREEN=video` 提供本地视频界面验证入口。`WISIMI_DEBUG_SCREEN=player` 或 `mini-player` 提供播放器预览，叠加 `WISIMI_SLEEP_TIMER=1` 显示活动定时器；`WISIMI_DEBUG_SCREEN=list-error` 显示刷新失败保留内容的场景。上述入口只存在于 Debug 构建。
 
-`check-downloads.sh` 使用本机 HTTP 服务验证嵌套目录、字幕附带、去重、响应与完整性校验、暂停继续、失败重试、持久化恢复及删除。Debug 模拟器中设置 `WISIMI_DOWNLOAD_PLAYBACK_CHECKS=1` 验证本地 MP4 真实解码与本地字幕；`WISIMI_DEBUG_SCREEN=downloads`、`download-detail`、`download-selection` 提供下载状态与多选布局验证入口。
+`check-downloads.sh` 使用本机 HTTP 服务验证嵌套目录、字幕附带、去重、响应与完整性校验、暂停继续、失败重试、持久化恢复及删除。Debug 模拟器中设置 `WISIMI_DOWNLOAD_PLAYBACK_CHECKS=1` 验证本地 MP4 真实解码与本地字幕；`WISIMI_DEBUG_SCREEN=downloads`、`download-detail`、`download-selection` 提供下载状态与多选布局验证入口。`downloads-many` 增加 80 个文件，`downloads-empty` 清空隔离模拟器测试下载并展示空态；`WISIMI_DEBUG_DOWNLOAD_EXPANDED=1` 自动展开作品，`WISIMI_DEBUG_DOWNLOAD_MINIPLAYER=1` 在下载页显示测试迷你播放器。上述下载布局入口应只在隔离模拟器使用。
 
 MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用性；加载或解码失败时可以在播放器中重试。
 
