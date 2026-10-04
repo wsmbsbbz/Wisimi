@@ -36,6 +36,14 @@ server.serve_forever()
 PY
 python3 "$check_dir/server.py" "$check_dir/port" &
 server_pid=$!
+# Wait for the server's explicit ready signal; Python starts more slowly on a fresh CI runner.
+ready_attempt=0
+while ! test -s "$check_dir/port"; do
+    kill -0 "$server_pid" 2>/dev/null || { echo "Download test server exited before startup" >&2; exit 1; }
+    ready_attempt=$((ready_attempt + 1))
+    test "$ready_attempt" -lt 300 || { echo "Download test server startup timed out" >&2; exit 1; }
+    sleep 0.1
+done
 cat > "$check_dir/main.swift" <<'SWIFT'
 import Foundation
 @main struct Check {
