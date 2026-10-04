@@ -2,30 +2,20 @@ import Foundation
 import Security
 
 struct OpenRouterTokenStore {
-    private let service: String
-    private let account: String
+    private let item: KeychainItem
 
-    init(service: String = "wisimi.openrouter", account: String = "api-token") {
-        self.service = service
-        self.account = account
+    init(service: String = "wisimi.openrouter", account: String = "api-token", operations: KeychainOperations = .live) {
+        item = KeychainItem(service: service, account: account,
+                            accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly, synchronizable: false,
+                            operations: operations)
     }
 
-    var isConfigured: Bool {
-        (try? load())?.isEmpty == false
-    }
+    var isConfigured: Bool { (try? load())?.isEmpty == false }
 
     func load() throws -> String? {
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess,
-              let data = item as? Data,
-              let token = String(data: data, encoding: .utf8) else {
-            throw OpenRouterTokenStoreError.keychain(status)
+        guard let data = try mapped({ try item.load() }) else { return nil }
+        guard let token = String(data: data, encoding: .utf8) else {
+            throw OpenRouterTokenStoreError.keychain(errSecDecode)
         }
         return token
     }
@@ -33,29 +23,14 @@ struct OpenRouterTokenStore {
     func save(_ token: String) throws {
         let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { throw OpenRouterTokenStoreError.emptyToken }
-        try delete()
-
-        var query = baseQuery
-        query[kSecValueData as String] = Data(normalized.utf8)
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else { throw OpenRouterTokenStoreError.keychain(status) }
+        try mapped { try item.save(Data(normalized.utf8)) }
     }
 
-    func delete() throws {
-        let status = SecItemDelete(baseQuery as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw OpenRouterTokenStoreError.keychain(status)
-        }
-    }
+    func delete() throws { try mapped { try item.delete() } }
 
-    private var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: kCFBooleanFalse as Any
-        ]
+    private func mapped<T>(_ operation: () throws -> T) throws -> T {
+        do { return try operation() }
+        catch let error as KeychainError { throw OpenRouterTokenStoreError.keychain(error.status) }
     }
 }
 

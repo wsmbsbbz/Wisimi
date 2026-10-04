@@ -202,6 +202,26 @@ enum TTSAudioFormat: String {
     case pcm
 }
 
+struct TTSSynthesisConfiguration: Equatable {
+    var model: TTSModelID
+    var voiceID: String
+    var speechRate: Double
+    var expression: TTSExpressionPreset
+    var inlineEffect: TTSInlineEffectPreset
+
+    var normalized: Self {
+        Self(model: model, voiceID: model.normalizedVoiceID(voiceID),
+             speechRate: model.normalizedSpeechRate(speechRate),
+             expression: model.supportedExpressions.contains(expression) ? expression : .automatic,
+             inlineEffect: model.supportedInlineEffects.contains(inlineEffect) ? inlineEffect : .automatic)
+    }
+
+    func request(text: String) -> TTSSynthesisRequest {
+        TTSSynthesisRequest(model: model, voiceID: voiceID, text: text, speechRate: speechRate,
+                            expression: expression, inlineEffect: inlineEffect)
+    }
+}
+
 struct TTSSynthesisRequest: Hashable {
     let model: TTSModelID
     let voiceID: String
@@ -250,9 +270,9 @@ enum TTSCache {
         return SHA256.hash(data: Data(components.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    static func url(for request: TTSSynthesisRequest) -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("wisimi-tts-v2", isDirectory: true)
+    static func url(for request: TTSSynthesisRequest, directory: URL? = nil) -> URL {
+        (directory ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("wisimi-tts-v2", isDirectory: true))
             .appendingPathComponent("\(fingerprint(for: request)).\(request.cacheFileExtension)")
     }
 
@@ -277,6 +297,7 @@ enum TTSCache {
     }
 }
 
+@MainActor
 protocol TTSProviderSynthesizing {
     func synthesize(_ request: TTSSynthesisRequest, credential: String?, to outputURL: URL) async throws
 }

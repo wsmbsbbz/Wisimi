@@ -30,6 +30,9 @@ jobs:
       - name: Check downloads and offline files
         run: sh scripts/check-downloads.sh
 
+      - name: Check refactored modules and coverage
+        run: bash scripts/check-refactor.sh
+
       - name: Build unsigned iOS app
         run: |
           xcodebuild build \

@@ -190,8 +190,6 @@ final class EdgeTTSProvider: TTSProviderSynthesizing {
 
     func synthesize(_ request: TTSSynthesisRequest, credential: String?, to outputURL: URL) async throws {
         guard request.model == .edge else { throw TTSSynthesisError.unsupportedConfiguration }
-        if TTSCache.containsValidAudio(at: outputURL) { return }
-        TTSCache.removeIfInvalid(at: outputURL)
         do {
             try await client.synthesizeToFile(text: request.text, speechRate: request.speechRate, outputURL: outputURL)
         } catch is CancellationError {

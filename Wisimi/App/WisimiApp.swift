@@ -14,7 +14,6 @@ struct WisimiApp: App {
         AudioPlayerSelfCheck.run()
         WorksNavigationSelfCheck.run()
         WorksFilterContextSelfCheck.run()
-        WorkDetailStateSelfCheck.run()
         TTSMixSettingsSelfCheck.run()
         TTSModelsSelfCheck.run()
         EdgeOnlineTTSSelfCheck.run()

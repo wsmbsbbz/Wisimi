@@ -47,6 +47,12 @@ jobs:
           xcodebuild -version | grep -q '^Xcode 27\.'
           xcodebuild -showsdks | grep -Eq 'iphoneos27\.[0-9]+'
 
+      - name: Verify behavior and coverage
+        run: |
+          sh scripts/check-state.sh
+          sh scripts/check-downloads.sh
+          bash scripts/check-refactor.sh
+
       - name: Build unsigned app
         run: |
           xcodebuild build \

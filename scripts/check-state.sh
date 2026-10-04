@@ -22,6 +22,7 @@ swiftc -D DEBUG -parse-as-library -module-cache-path "$check_dir/cache" \
     Wisimi/Features/Works/PlaybackState.swift Wisimi/Features/Works/SleepTimer.swift \
     Wisimi/Features/Works/WorksPageState.swift Wisimi/Features/Works/WorksModels.swift \
     Wisimi/Features/Works/ASMRClient.swift Wisimi/Features/Works/AuthSession.swift \
+    Wisimi/Shared/Storage/KeychainItem.swift \
     Wisimi/Shared/Extensions/DurationFormat.swift Wisimi/Shared/Extensions/ErrorMessage.swift \
     "$check_dir/main.swift" -o "$check_dir/check"
 "$check_dir/check"

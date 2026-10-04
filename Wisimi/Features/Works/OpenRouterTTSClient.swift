@@ -15,8 +15,6 @@ final class OpenRouterTTSClient: TTSProviderSynthesizing {
               !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TTSSynthesisError.unsupportedConfiguration
         }
-        if TTSCache.containsValidAudio(at: outputURL) { return }
-        TTSCache.removeIfInvalid(at: outputURL)
 
         let urlRequest = try Self.makeRequest(for: request, credential: credential)
         do {
@@ -233,6 +231,7 @@ private struct OpenRouterErrorEnvelope: Decodable {
 }
 
 #if DEBUG
+@MainActor
 enum OpenRouterTTSSelfCheck {
     static func run() {
         let request = TTSSynthesisRequest(model: .geminiFlashPreview, voiceID: "Kore", text: "晚安", speechRate: 1.2, expression: .whisper)

@@ -18,52 +18,27 @@ final class TTSMixSettings: ObservableObject {
         }
     }
 
-    @Published var maxSpeechRate: Double {
-        didSet {
-            let clamped = model.normalizedSpeechRate(maxSpeechRate)
-            if maxSpeechRate != clamped {
-                maxSpeechRate = clamped
-            } else {
-                defaults.set(clamped, forKey: Self.maxSpeechRateKey)
-            }
-        }
-    }
+    @Published private(set) var configuration: TTSSynthesisConfiguration
 
-    @Published var model: TTSModelID {
-        didSet {
-            defaults.set(model.rawValue, forKey: Self.modelKey)
-            normalizeCapabilities()
-        }
+    var maxSpeechRate: Double {
+        get { configuration.speechRate }
+        set { update { $0.speechRate = newValue } }
     }
-
-    @Published var voiceID: String {
-        didSet {
-            if !model.voices.contains(where: { $0.id == voiceID }) {
-                voiceID = model.defaultVoiceID
-            } else {
-                defaults.set(voiceID, forKey: Self.voiceKey)
-            }
-        }
+    var model: TTSModelID {
+        get { configuration.model }
+        set { update { $0.model = newValue } }
     }
-
-    @Published var expressionPreset: TTSExpressionPreset {
-        didSet {
-            if !model.supportedExpressions.contains(expressionPreset) {
-                expressionPreset = .automatic
-            } else {
-                defaults.set(expressionPreset.rawValue, forKey: Self.expressionKey)
-            }
-        }
+    var voiceID: String {
+        get { configuration.voiceID }
+        set { update { $0.voiceID = newValue } }
     }
-
-    @Published var inlineEffectPreset: TTSInlineEffectPreset {
-        didSet {
-            if !model.supportedInlineEffects.contains(inlineEffectPreset) {
-                inlineEffectPreset = .automatic
-            } else {
-                defaults.set(inlineEffectPreset.rawValue, forKey: Self.inlineEffectKey)
-            }
-        }
+    var expressionPreset: TTSExpressionPreset {
+        get { configuration.expression }
+        set { update { $0.expression = newValue } }
+    }
+    var inlineEffectPreset: TTSInlineEffectPreset {
+        get { configuration.inlineEffect }
+        set { update { $0.inlineEffect = newValue } }
     }
 
     @Published private(set) var isOpenRouterConfigured: Bool
@@ -97,23 +72,15 @@ final class TTSMixSettings: ObservableObject {
         } else {
             volume = Self.clampedVolume(defaults.double(forKey: Self.volumeKey))
         }
-        if defaults.object(forKey: Self.maxSpeechRateKey) == nil {
-            maxSpeechRate = 1.25
-        } else {
-            maxSpeechRate = Self.clampedPersistedSpeechRate(defaults.double(forKey: Self.maxSpeechRateKey))
-        }
         let restoredModel = defaults.string(forKey: Self.modelKey).flatMap(TTSModelID.init(rawValue:)) ?? .edge
-        model = restoredModel
-        let storedVoice = defaults.string(forKey: Self.voiceKey)
-        voiceID = storedVoice.flatMap { candidate in
-            restoredModel.voices.contains(where: { $0.id == candidate }) ? candidate : nil
-        } ?? restoredModel.defaultVoiceID
-        let storedExpression = defaults.string(forKey: Self.expressionKey).flatMap(TTSExpressionPreset.init(rawValue:)) ?? .automatic
-        expressionPreset = restoredModel.supportedExpressions.contains(storedExpression) ? storedExpression : .automatic
-        let storedInlineEffect = defaults.string(forKey: Self.inlineEffectKey).flatMap(TTSInlineEffectPreset.init(rawValue:)) ?? .automatic
-        inlineEffectPreset = restoredModel.supportedInlineEffects.contains(storedInlineEffect) ? storedInlineEffect : .automatic
+        configuration = TTSSynthesisConfiguration(
+            model: restoredModel,
+            voiceID: defaults.string(forKey: Self.voiceKey) ?? restoredModel.defaultVoiceID,
+            speechRate: defaults.object(forKey: Self.maxSpeechRateKey) == nil ? 1.25 : defaults.double(forKey: Self.maxSpeechRateKey),
+            expression: defaults.string(forKey: Self.expressionKey).flatMap(TTSExpressionPreset.init(rawValue:)) ?? .automatic,
+            inlineEffect: defaults.string(forKey: Self.inlineEffectKey).flatMap(TTSInlineEffectPreset.init(rawValue:)) ?? .automatic
+        ).normalized
         isOpenRouterConfigured = resolvedTokenStore.isConfigured
-        maxSpeechRate = restoredModel.normalizedSpeechRate(maxSpeechRate)
     }
 
     var provider: TTSProviderID { model.provider }
@@ -124,14 +91,7 @@ final class TTSMixSettings: ObservableObject {
     }
 
     func synthesisRequest(text: String) -> TTSSynthesisRequest {
-        TTSSynthesisRequest(
-            model: model,
-            voiceID: model.normalizedVoiceID(voiceID),
-            text: text,
-            speechRate: model.supportsSpeechRate ? maxSpeechRate : 1,
-            expression: model.supportedExpressions.contains(expressionPreset) ? expressionPreset : .automatic,
-            inlineEffect: model.supportedInlineEffects.contains(inlineEffectPreset) ? inlineEffectPreset : .automatic
-        )
+        configuration.request(text: text)
     }
 
     func openRouterToken() -> String? {
@@ -164,7 +124,6 @@ final class TTSMixSettings: ObservableObject {
             if normalizedCandidate?.isEmpty == false {
                 try tokenStore.save(token)
                 isOpenRouterConfigured = true
-                credentialRevision += 1
             }
             if model == .edge {
                 model = .minimaxTurbo
@@ -190,29 +149,26 @@ final class TTSMixSettings: ObservableObject {
         }
     }
 
-    private func normalizeCapabilities() {
-        if !model.voices.contains(where: { $0.id == voiceID }) {
-            voiceID = model.defaultVoiceID
-        }
-        if !model.supportedExpressions.contains(expressionPreset) {
-            expressionPreset = .automatic
-        }
-        if !model.supportedInlineEffects.contains(inlineEffectPreset) {
-            inlineEffectPreset = .automatic
-        }
-        maxSpeechRate = model.normalizedSpeechRate(maxSpeechRate)
+    private func update(_ change: (inout TTSSynthesisConfiguration) -> Void) {
+        var candidate = configuration
+        change(&candidate)
+        candidate = candidate.normalized
+        guard candidate != configuration else { return }
+        configuration = candidate
+        defaults.set(candidate.model.rawValue, forKey: Self.modelKey)
+        defaults.set(candidate.voiceID, forKey: Self.voiceKey)
+        defaults.set(candidate.speechRate, forKey: Self.maxSpeechRateKey)
+        defaults.set(candidate.expression.rawValue, forKey: Self.expressionKey)
+        defaults.set(candidate.inlineEffect.rawValue, forKey: Self.inlineEffectKey)
     }
 
     private static func clampedVolume(_ value: Double) -> Double {
         min(max(value, 0), 1)
     }
-
-    private static func clampedPersistedSpeechRate(_ value: Double) -> Double {
-        min(max(value, 0.5), 2)
-    }
 }
 
 #if DEBUG
+@MainActor
 enum TTSMixSettingsSelfCheck {
     static func run() {
         let suite = "TTSMixSettingsSelfCheck-\(UUID().uuidString)"

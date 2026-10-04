@@ -294,3 +294,18 @@ enum DecodeSelfCheck {
     }
 }
 #endif
+
+extension Array where Element == TrackNode {
+    func resolvingDirectoryPath(ids: [TrackNode.ID]) -> [TrackNode]? {
+        guard !ids.isEmpty else { return [] }
+
+        var siblings = self
+        var resolvedPath: [TrackNode] = []
+        for id in ids {
+            guard let folder = siblings.first(where: { $0.id == id && $0.isFolder }) else { return nil }
+            resolvedPath.append(folder)
+            siblings = folder.children ?? []
+        }
+        return resolvedPath
+    }
+}

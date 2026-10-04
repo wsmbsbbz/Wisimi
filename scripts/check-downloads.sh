@@ -56,5 +56,6 @@ swiftc -D DEBUG -parse-as-library -module-cache-path "$check_dir/cache" \
     Wisimi/Features/Works/DownloadStore.swift Wisimi/Features/Works/DownloadSelfCheck.swift \
     Wisimi/Features/Works/WorksModels.swift Wisimi/Features/Works/ASMRClient.swift \
     Wisimi/Features/Works/AuthSession.swift Wisimi/Shared/Extensions/DurationFormat.swift \
+    Wisimi/Shared/Storage/KeychainItem.swift \
     "$check_dir/main.swift" -o "$check_dir/check"
 "$check_dir/check" "http://127.0.0.1:$(cat "$check_dir/port")"

@@ -3,6 +3,9 @@ import Foundation
 struct ASMRClient {
     private let baseURL = URL(string: "https://api.asmr-200.com/api")!
     private let decoder = JSONDecoder()
+    private let session: URLSession
+
+    init(session: URLSession = .shared) { self.session = session }
 
     func login(name: String, password: String) async throws -> AuthResponse {
         try await postJSON(
@@ -219,7 +222,7 @@ struct ASMRClient {
     }
 
     private func data(for request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, 200..<300 ~= httpResponse.statusCode else {
             throw ASMRClientError.badResponse
         }
