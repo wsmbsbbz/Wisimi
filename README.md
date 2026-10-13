@@ -72,7 +72,8 @@ MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用�
 
 - Wisimi 会直接请求 asmr.one 相关接口，作品数据来自 asmr.one。
 - 登录 asmr.one 后的 token 只保存在本机 Keychain 中，不会提交到仓库，也不会由 Wisimi 上传到其他服务。
-- 用户填写的 OpenRouter Token 使用 `WhenUnlockedThisDeviceOnly` 策略保存在本机 Keychain，不参与同步，也不会写入偏好设置、缓存名称或日志。
+- 用户填写的 OpenRouter Token 使用 `AfterFirstUnlockThisDeviceOnly` 策略保存在本机 Keychain，不参与同步，也不会写入偏好设置、缓存名称或日志。
+- 设备首次解锁后，OpenRouter Token 可供锁屏后台旁白读取；已有 Token 在应用初始化时原位更新权限，读取错误不会当成未配置凭据。
 - 播放进度、TTS 设置和 TTS 临时缓存保存在本机。
 - 用户下载保存在本机 Application Support，排除 iCloud 备份；不会随临时缓存自动清理，可在下载管理中删除。下载管理的占用统计针对已完成文件，进行中的任务还可能占用系统临时空间。
 - 下载由 iOS 后台调度，可使用蜂窝网络。暂停与继续使用系统任务；用户强制退出可能取消后台下载，重新打开后可重试。后台处理时机与能否续传由系统和服务器决定。
@@ -94,6 +95,8 @@ MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用�
 - 更细的错误提示和重试体验
 - 面向不同 iOS 设备尺寸的持续 UI 打磨
 
+Debug 模拟器中设置 `WISIMI_NARRATION_CHECKS=1` 可验证旁白截止任务取消及换曲状态复位；`WISIMI_DEBUG_SCREEN=narration` 提供离线字幕与失败重试布局，不调用远程 TTS。
+
 ## License
 
-MIT
+应用代码采用 MIT。Edge v2 签名文件遵循 LGPL-3.0，第三方通知与 GPL/LGPL 文本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，也随应用资源提供。

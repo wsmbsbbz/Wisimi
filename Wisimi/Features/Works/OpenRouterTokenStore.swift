@@ -6,7 +6,7 @@ struct OpenRouterTokenStore {
 
     init(service: String = "wisimi.openrouter", account: String = "api-token", operations: KeychainOperations = .live) {
         item = KeychainItem(service: service, account: account,
-                            accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly, synchronizable: false,
+                            accessibility: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, synchronizable: false,
                             operations: operations)
     }
 
@@ -18,6 +18,13 @@ struct OpenRouterTokenStore {
             throw OpenRouterTokenStoreError.keychain(errSecDecode)
         }
         return token
+    }
+
+    func prepareForBackgroundAccess() throws {
+        // Update the existing item while unlocked, without asking for the token again.
+        try mapped {
+            if let data = try item.load() { try item.save(data) }
+        }
     }
 
     func save(_ token: String) throws {

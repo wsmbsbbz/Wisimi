@@ -1,14 +1,12 @@
-import CryptoKit
 import Foundation
 
 final class EdgeOnlineTTSClient {
     private static let trustedClientToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
     private static let chromiumFullVersion = "143.0.3650.75"
     private static let chromiumMajorVersion = "143"
-    private static let secMSGeCVersion = "1-\(chromiumFullVersion)"
+    private static let secMSGeCVersion = "2-\(chromiumFullVersion)"
     private static let endpoint = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
     private static let outputFormat = "audio-24khz-48kbitrate-mono-mp3"
-    private static let windowsEpochSeconds = 11_644_473_600
     private static let timeout: TimeInterval = 45
     private static let userAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -26,47 +24,48 @@ final class EdgeOnlineTTSClient {
         socket.resume()
         defer { socket.cancel(with: .goingAway, reason: nil) }
 
-        try await socket.send(.string(Self.speechConfigMessage()))
-        try await socket.send(.string(Self.ssmlMessage(requestID: connectionID, text: text, speechRate: speechRate)))
-
-        var audio = Data()
-        while true {
-            let message = try await Self.receiveMessage(from: socket)
-            switch message {
-            case .string(let value):
-                if value.contains("Path:turn.end") {
-                    guard !audio.isEmpty else { throw EdgeOnlineTTSError.emptyAudio }
-                    try audio.write(to: outputURL, options: .atomic)
-                    return
-                }
-            case .data(let data):
-                if let payload = Self.audioPayload(from: data), !payload.isEmpty {
-                    audio.append(payload)
-                }
-            @unknown default:
-                continue
-            }
+        let expiresAt = ContinuousClock.now.advanced(by: .seconds(Self.timeout))
+        let deadline = Task {
+            try await Task.sleep(for: .seconds(Self.timeout))
+            socket.cancel(with: .goingAway, reason: nil)
         }
-    }
-
-    private static func receiveMessage(from socket: URLSessionWebSocketTask) async throws -> URLSessionWebSocketTask.Message {
-        try await withThrowingTaskGroup(of: URLSessionWebSocketTask.Message.self) { group in
-            group.addTask {
-                try await socket.receive()
+        defer { deadline.cancel() }
+        try await withTaskCancellationHandler {
+            do {
+                try Task.checkCancellation()
+                try await socket.send(.string(Self.speechConfigMessage()))
+                try await socket.send(.string(Self.ssmlMessage(requestID: connectionID, text: text, speechRate: speechRate)))
+                var audio = Data()
+                while true {
+                    let message = try await socket.receive()
+                    try Task.checkCancellation()
+                    switch message {
+                    case .string(let value):
+                        if value.contains("Path:turn.end") {
+                            guard !audio.isEmpty else { throw EdgeOnlineTTSError.emptyAudio }
+                            try audio.write(to: outputURL, options: .atomic)
+                            return
+                        }
+                    case .data(let data):
+                        if let payload = Self.audioPayload(from: data), !payload.isEmpty {
+                            audio.append(payload)
+                        }
+                    @unknown default:
+                        continue
+                    }
+                }
+            } catch {
+                try Task.checkCancellation()
+                if ContinuousClock.now >= expiresAt { throw EdgeOnlineTTSError.timeout }
+                throw error
             }
-            group.addTask {
-                try await Task.sleep(for: .seconds(timeout))
-                throw EdgeOnlineTTSError.timeout
-            }
-
-            guard let message = try await group.next() else { throw EdgeOnlineTTSError.timeout }
-            group.cancelAll()
-            return message
+        } onCancel: {
+            socket.cancel(with: .goingAway, reason: nil)
         }
     }
 
     private static func request(connectionID: String) -> URLRequest {
-        let secMSGeC = generateSecMSGeC()
+        let secMSGeC = EdgeSpeechSignature.token()
         let url = URL(string:
             "\(endpoint)?TrustedClientToken=\(trustedClientToken)" +
             "&ConnectionId=\(connectionID)" +
@@ -88,7 +87,7 @@ final class EdgeOnlineTTSClient {
 
     private static func speechConfigMessage() -> String {
         let payload = """
-        {"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":false,"wordBoundaryEnabled":false},"outputFormat":"\(outputFormat)"}}}}
+        {"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"\(outputFormat)"}}}}
         """
         return "X-Timestamp:\(edgeDateString())\r\n" +
             "Content-Type:application/json; charset=utf-8\r\n" +
@@ -108,7 +107,7 @@ final class EdgeOnlineTTSClient {
             "xmlns:mstts=\"https://www.w3.org/2001/mstts\" " +
             "xml:lang=\"zh-CN\">" +
             "<voice name=\"zh-CN-XiaoxiaoNeural\">" +
-            "<prosody rate=\"\(rate)%\">\(escapeXML(text))</prosody>" +
+            "<prosody pitch=\"+0Hz\" rate=\"+\(rate)%\" volume=\"+0%\">\(escapeXML(text))</prosody>" +
             "</voice></speak>"
 
         return "X-RequestId:\(requestID)\r\n" +
@@ -147,14 +146,6 @@ final class EdgeOnlineTTSClient {
             speechRate: speechRate,
             expression: .automatic
         ).cacheURL
-    }
-
-    private static func generateSecMSGeC() -> String {
-        var ticks = Int(Date().timeIntervalSince1970)
-        ticks += windowsEpochSeconds
-        ticks -= ticks % 300
-        let fileTimeTicks = ticks * 10_000_000
-        return SHA256.hash(data: Data("\(fileTimeTicks)\(trustedClientToken)".utf8)).hexString.uppercased()
     }
 
     private static func connectionID() -> String {
@@ -216,12 +207,6 @@ enum EdgeOnlineTTSError: LocalizedError {
     }
 }
 
-private extension Digest {
-    var hexString: String {
-        map { String(format: "%02x", $0) }.joined()
-    }
-}
-
 #if DEBUG
 enum EdgeOnlineTTSSelfCheck {
     static func run() {
@@ -240,7 +225,11 @@ enum EdgeOnlineTTSSelfCheck {
         assert(EdgeOnlineTTSClient.ssmlRate(for: 1.0) == 0)
         assert(EdgeOnlineTTSClient.ssmlRate(for: 1.25) == 25)
         assert(EdgeOnlineTTSClient.cacheURL(for: "hello", speechRate: 1.0) != EdgeOnlineTTSClient.cacheURL(for: "hello", speechRate: 1.25))
-        assert(EdgeOnlineTTSClient.ssmlMessage(requestID: "id", text: "hello", speechRate: 1.25).contains("rate=\"25%\""))
+        assert(EdgeOnlineTTSClient.ssmlMessage(requestID: "id", text: "hello", speechRate: 1.25).contains("rate=\"+25%\""))
+        assert(EdgeSpeechSignature.token(at: 1_700_000_000) == "2CD23A2CA0B2595A-F3C846C370E05F9CC83ACC5F995C5F5D87A4D0F14CE8936A0F902E64099E38A2")
+        assert(EdgeSpeechSignature.token(at: 1_791_907_200) == "15F3FF629419C5C3-25518D01D8A232E310AF58C808C2B58F6FF62947805FB0F70E013DDA9E88D169")
+        assert(EdgeSpeechSignature.token(at: 1_791_907_499) == EdgeSpeechSignature.token(at: 1_791_907_200))
+        assert(EdgeSpeechSignature.token(at: 1_791_907_500) == "C9D9CBAF94BE118A-2DDDC327EE532F5937C271B3010E916D04F12E19E00586E8E98938789716A033")
     }
 }
 #endif

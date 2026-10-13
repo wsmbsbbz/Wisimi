@@ -80,6 +80,8 @@ final class TTSMixSettings: ObservableObject {
             expression: defaults.string(forKey: Self.expressionKey).flatMap(TTSExpressionPreset.init(rawValue:)) ?? .automatic,
             inlineEffect: defaults.string(forKey: Self.inlineEffectKey).flatMap(TTSInlineEffectPreset.init(rawValue:)) ?? .automatic
         ).normalized
+        do { try resolvedTokenStore.prepareForBackgroundAccess() }
+        catch { runtimeNotice = error.localizedDescription }
         isOpenRouterConfigured = resolvedTokenStore.isConfigured
     }
 
@@ -94,13 +96,16 @@ final class TTSMixSettings: ObservableObject {
         configuration.request(text: text)
     }
 
-    func openRouterToken() -> String? {
-        try? tokenStore.load()
+    func openRouterToken() throws -> String? {
+        try tokenStore.load()
     }
 
     func testOpenRouterConnection(candidateToken: String? = nil) async {
         let normalizedCandidate = candidateToken?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let token = normalizedCandidate?.isEmpty == false ? normalizedCandidate : openRouterToken() else {
+        let storedToken: String?
+        do { storedToken = normalizedCandidate?.isEmpty == false ? normalizedCandidate : try openRouterToken() }
+        catch { connectionTestState = .failure(error.localizedDescription); return }
+        guard let token = storedToken else {
             connectionTestState = .failure("请先输入 OpenRouter Token")
             return
         }

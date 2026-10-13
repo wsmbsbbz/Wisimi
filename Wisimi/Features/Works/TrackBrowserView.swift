@@ -99,7 +99,7 @@ struct TrackBrowserView: View {
                                         .font(.title3)
                                         .frame(width: 44, height: 44)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(PressFeedbackButtonStyle())
                                 .disabled(ids.isEmpty)
                                 .accessibilityLabel("选择 \(item.node.title)")
                                 .accessibilityValue(ids.isSubset(of: selection) ? "已选中" : "未选中")
@@ -146,7 +146,7 @@ struct TrackBrowserView: View {
                     .font(.headline)
                     .lineLimit(2)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressFeedbackButtonStyle())
             .copyContextMenu(currentTitle, label: "文件夹名称")
 
             Image(systemName: isPathMenuExpanded ? "chevron.up" : "chevron.down")
@@ -213,7 +213,7 @@ struct TrackBrowserView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressFeedbackButtonStyle())
                 .copyContextMenu(item.title, label: "文件夹名称")
             }
         }
@@ -256,21 +256,21 @@ private struct TrackBrowserNode: View {
                 } label: {
                     TrackNodeRow(track: item.node, workID: workID)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressFeedbackButtonStyle())
             } else if item.node.isPlayable, item.node.playbackURL != nil {
                 Button {
                     playMedia(item.node)
                 } label: {
                     TrackNodeRow(track: item.node, workID: workID)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressFeedbackButtonStyle())
             } else if item.node.imagePreviewURL != nil {
                 Button {
                     previewImage(item)
                 } label: {
                     TrackNodeRow(track: item.node, workID: workID)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressFeedbackButtonStyle())
             } else {
                 TrackNodeRow(track: item.node, workID: workID)
             }

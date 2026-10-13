@@ -13,7 +13,7 @@ struct PlaybackToggleButton: View {
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(.rect)
         }
-        .buttonStyle(PlaybackPressStyle())
+        .buttonStyle(PressFeedbackButtonStyle())
         .accessibilityLabel(state.wantsPlayback ? "暂停" : "播放")
         .accessibilityValue(state == .preparing ? "正在准备播放" : "")
     }
@@ -24,8 +24,13 @@ struct PlaybackToggleButton: View {
     }
 }
 
-private struct PlaybackPressStyle: ButtonStyle {
+struct PressFeedbackButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.scaleEffect(configuration.isPressed ? 0.94 : 1)
+        configuration.label
+            .contentShape(.rect)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .opacity(configuration.isPressed && reduceMotion ? 0.7 : 1)
     }
 }

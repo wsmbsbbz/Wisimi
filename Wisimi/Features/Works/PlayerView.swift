@@ -39,6 +39,11 @@ struct PlayerView: View {
         }
         .navigationTitle("播放器")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "narration" { isShowingSubtitles = true }
+            #endif
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -200,11 +205,7 @@ private struct PlayerMainContent: View {
     var body: some View {
         Group {
             if isShowingSubtitles {
-                SubtitleListView(player: player) {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        isShowingSubtitles = false
-                    }
-                }
+                SubtitleListView(player: player)
             } else {
                 PlayerCoverContent(player: player, isShowingSubtitles: $isShowingSubtitles)
             }
@@ -314,13 +315,12 @@ private struct PlayerControls: View {
                     .frame(width: 44, height: 44)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressFeedbackButtonStyle())
     }
 }
 
 private struct SubtitleListView: View {
     @ObservedObject var player: WorkAudioPlayer
-    let hideSubtitles: () -> Void
     @GestureState private var isTouchingSubtitleList = false
     @State private var subtitleAutoScrollResumeAt = Date.distantPast
     @State private var subtitleInteractionToken = 0
@@ -341,21 +341,19 @@ private struct SubtitleListView: View {
                                 Button {
                                     player.seek(to: subtitle)
                                 } label: {
-                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                        NarrationStatusIcon(status: player.narrationStatuses[subtitle.id])
-
-                                        Text(subtitle.text)
+                                    Text(subtitle.text)
                                             .font(.subheadline)
                                             .fontWeight(index == player.currentSubtitleIndex ? .semibold : .regular)
                                             .foregroundStyle(index == player.currentSubtitleIndex ? .primary : .secondary)
                                             .multilineTextAlignment(.center)
                                             .frame(maxWidth: .infinity)
-                                    }
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 8)
+                                    .frame(minHeight: 44)
+                                    .contentShape(.rect)
                                     .animation(.easeOut(duration: 0.25), value: player.currentSubtitleIndex)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(PressFeedbackButtonStyle())
                                 .copyContextMenu(subtitle.text, label: "字幕")
                                 .id(index)
                             }
@@ -372,16 +370,15 @@ private struct SubtitleListView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(.rect)
-            .gesture(
-                TapGesture().onEnded(hideSubtitles),
-                including: .gesture
-            )
             .background(.thinMaterial, in: .rect(cornerRadius: 20))
             .overlay {
                 RoundedRectangle(cornerRadius: 20)
                     .stroke(.quaternary, lineWidth: 1)
             }
             .clipShape(.rect(cornerRadius: 20))
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                MixStatusView(state: player.narrationState, retry: player.retryNarration)
+            }
             .onChange(of: player.currentSubtitleIndex) {
                 guard canAutoScrollToCurrentSubtitle else { return }
                 scrollToCurrentSubtitle(with: proxy)
@@ -422,37 +419,31 @@ private struct SubtitleListView: View {
     }
 }
 
-private struct NarrationStatusIcon: View {
-    let status: TTSGenerationStatus?
+private struct MixStatusView: View {
+    let state: NarrationState
+    let retry: () -> Void
 
     var body: some View {
-        Group {
-            if let status {
-                Image(systemName: "circle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(color(for: status))
-                    .accessibilityLabel(label(for: status))
-            } else {
-                Color.clear
-                    .accessibilityHidden(true)
+        if state != .off {
+            HStack(spacing: 8) {
+                switch state {
+                case .off: EmptyView()
+                case .enabled: Text("混音已开启")
+                case .preparing: Text("正在准备旁白…")
+                case .fallback: Text("已改用免费旁白")
+                case .failed(let message):
+                    Text("旁白暂不可用")
+                        .accessibilityLabel("旁白暂不可用：\(message)")
+                    Button("重试", action: retry)
+                        .buttonStyle(.bordered)
+                }
             }
-        }
-        .frame(width: 12)
-    }
-
-    private func color(for status: TTSGenerationStatus) -> Color {
-        switch status {
-        case .generating: .blue
-        case .ready: .green
-        case .failed: .red
-        }
-    }
-
-    private func label(for status: TTSGenerationStatus) -> String {
-        switch status {
-        case .generating: "TTS 正在生成"
-        case .ready: "TTS 已生成"
-        case .failed: "TTS 生成失败"
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(.regularMaterial)
+            .accessibilityIdentifier("narration-status")
         }
     }
 }

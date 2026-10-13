@@ -42,8 +42,9 @@ struct WorksListView: View {
             }
         }
         if debugScreen == "download-detail" || debugScreen == "download-selection" { _path = State(initialValue: [.detail(99999999)]) }
-        if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" {
+        if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" || debugScreen == "narration" {
             try? player.prepareDebugPlayback()
+            if debugScreen == "narration" { try? player.prepareDebugNarrationPreview() }
             if ProcessInfo.processInfo.environment["WISIMI_SLEEP_TIMER"] == "1" {
                 player.setSleepTimer(.deadline(.now.addingTimeInterval(1800)))
             }
@@ -233,6 +234,11 @@ struct WorksListView: View {
         .onChange(of: auth.token) { catalog.reset() }
         .task {
             #if DEBUG
+            if ProcessInfo.processInfo.environment["WISIMI_NARRATION_CHECKS"] == "1" {
+                do { try await player.runNarrationChecks() }
+                catch { assertionFailure("Narration checks failed: \(error)") }
+                return
+            }
             if ProcessInfo.processInfo.environment["WISIMI_DOWNLOAD_PLAYBACK_CHECKS"] == "1" {
                 do { try await player.runDownloadedMediaCheck() }
                 catch { assertionFailure("Downloaded media check failed: \(error)") }

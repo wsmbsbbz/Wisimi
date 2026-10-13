@@ -1,11 +1,12 @@
 import Foundation
 
-/// Owns cache lookup and provider failure policy; playback owns timing and cancellation.
+/// Owns synthesis jobs and session results; playback owns the audio clock.
 @MainActor
 final class TTSCoordinator {
     struct Audio {
         let url: URL
         let notice: String?
+        var isFallback = false
     }
 
     private let edge: any TTSProviderSynthesizing
@@ -14,6 +15,8 @@ final class TTSCoordinator {
     private var session = OpenRouterPlaybackSession()
     private var generation = UUID()
     private var notices: Set<String> = []
+    private var jobs: [String: Task<Audio, Error>] = [:]
+    private var results: [String: Result<Audio, Error>] = [:]
 
     init(edge: (any TTSProviderSynthesizing)? = nil,
          openRouter: (any TTSProviderSynthesizing)? = nil, cacheDirectory: URL? = nil) {
@@ -23,19 +26,64 @@ final class TTSCoordinator {
     }
 
     func reset() {
-        generation = UUID()
+        cancelPending()
         session.reset()
         notices = []
+        results = [:]
+    }
+
+    func cancelPending() {
+        generation = UUID()
+        for job in jobs.values { job.cancel() }
+        jobs = [:]
     }
 
     func cachedAudio(for request: TTSSynthesisRequest, hasCredential: Bool) -> URL? {
         if let cached = cached(request) { return cached }
+        if case .success(let audio) = results[key(for: request, hasCredential: hasCredential)],
+           TTSCache.containsValidAudio(at: audio.url) { return audio.url }
         guard request.model != .edge, !hasCredential || session.isCircuitOpen else { return nil }
         return cached(edgeRequest(for: request))
     }
 
     func audio(for request: TTSSynthesisRequest, credential: String?) async throws -> Audio {
+        try Task.checkCancellation()
         let id = generation
+        let key = key(for: request, hasCredential: credential?.isEmpty == false)
+        if let result = results[key] {
+            if case .success(let audio) = result, !TTSCache.containsValidAudio(at: audio.url) { results[key] = nil }
+            else { return try result.get() }
+        }
+        let job: Task<Audio, Error>
+        if let existing = jobs[key] { job = existing }
+        else {
+            job = Task { [self] in
+                do {
+                    let audio = try await resolveAudio(for: request, credential: credential, generation: id)
+                    try checkActive(id)
+                    results[key] = .success(audio)
+                    jobs[key] = nil
+                    return audio
+                } catch {
+                    if id == generation {
+                        jobs[key] = nil
+                        if !(error is CancellationError), !Task.isCancelled { results[key] = .failure(error) }
+                    }
+                    throw error
+                }
+            }
+            jobs[key] = job
+        }
+        let audio = try await job.value
+        try checkActive(id)
+        return audio
+    }
+
+    private func key(for request: TTSSynthesisRequest, hasCredential: Bool) -> String {
+        TTSCache.fingerprint(for: request) + (hasCredential ? "|credential" : "|free")
+    }
+
+    private func resolveAudio(for request: TTSSynthesisRequest, credential: String?, generation id: UUID) async throws -> Audio {
         try checkActive(id)
         if let url = cached(request) { return Audio(url: url, notice: nil) }
         if request.model == .edge {
@@ -72,7 +120,7 @@ final class TTSCoordinator {
         if let existing = cached(fallback) { url = existing }
         else { url = try await generate(fallback, using: edge, credential: nil, generation: id) }
         try checkActive(id)
-        return Audio(url: url, notice: notices.insert(message).inserted ? message : nil)
+        return Audio(url: url, notice: notices.insert(message).inserted ? message : nil, isFallback: true)
     }
 
     private func cached(_ request: TTSSynthesisRequest) -> URL? {
@@ -87,12 +135,15 @@ final class TTSCoordinator {
     private func generate(_ request: TTSSynthesisRequest, using provider: any TTSProviderSynthesizing,
                           credential: String?, generation id: UUID) async throws -> URL {
         let url = TTSCache.url(for: request, directory: cacheDirectory)
-        try await provider.synthesize(request, credential: credential, to: url)
+        let temporary = url.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).\(request.cacheFileExtension)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try await provider.synthesize(request, credential: credential, to: temporary)
         try checkActive(id)
-        guard TTSCache.containsValidAudio(at: url) else {
-            TTSCache.removeIfInvalid(at: url)
+        guard TTSCache.containsValidAudio(at: temporary) else {
             throw TTSSynthesisError.invalidResponse
         }
+        if let existing = cached(request) { return existing }
+        try FileManager.default.moveItem(at: temporary, to: url)
         return url
     }
 

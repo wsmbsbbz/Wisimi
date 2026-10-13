@@ -6,7 +6,7 @@ trap 'rm -rf "$check_dir"' EXIT
 python3 Tests/CoverageGateChecks.py
 swiftc -D DEBUG -parse-as-library -profile-generate -profile-coverage-mapping \
     -module-cache-path "$check_dir/cache" \
-    Wisimi/Features/Works/{ASMRClient,AuthSession,WorksModels,WorksPageState,WorksBrowserState,WorksNavigation,PlaylistCatalog,WorkDetailPageState,DownloadStore,TTSModels,TTSCoordinator,TTSMixSettings,EdgeOnlineTTSClient,OpenRouterTTSClient,OpenRouterTokenStore}.swift \
+    Wisimi/Features/Works/{ASMRClient,AuthSession,WorksModels,WorksPageState,WorksBrowserState,WorksNavigation,PlaylistCatalog,WorkDetailPageState,DownloadStore,TTSModels,TTSCoordinator,TTSMixSettings,EdgeOnlineTTSClient,EdgeSpeechSignature,OpenRouterTTSClient,OpenRouterTokenStore}.swift \
     Wisimi/Shared/Storage/KeychainItem.swift Wisimi/Shared/Extensions/{DurationFormat,ErrorMessage}.swift \
     Tests/RefactorChecks.swift -o "$check_dir/check"
 LLVM_PROFILE_FILE="$check_dir/check.profraw" "$check_dir/check"

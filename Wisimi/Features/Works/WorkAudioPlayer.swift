@@ -22,7 +22,7 @@ final class WorkAudioPlayer: ObservableObject {
     private var sleepTimerTask: Task<Void, Never>?
     @Published private(set) var subtitles: [SubtitleLine] = []
     @Published private(set) var currentSubtitleIndex: Int?
-    @Published private(set) var narrationStatuses: [SubtitleLine.ID: TTSGenerationStatus] = [:]
+    @Published private(set) var narrationState: NarrationState = .off
 
     private let client: ASMRClient
     private let ttsSettings: TTSMixSettings
@@ -58,6 +58,7 @@ final class WorkAudioPlayer: ObservableObject {
         configureRemoteCommands()
         observeAudioSession()
         narrationPlayer.volume = Float(ttsSettings.volume)
+        narrationState = ttsSettings.isEnabled ? .enabled : .off
         playerStatusCancellable = player.publisher(for: \.timeControlStatus)
             .sink { [weak self] _ in
                 guard let self else { return }
@@ -72,12 +73,16 @@ final class WorkAudioPlayer: ObservableObject {
             .sink { [weak self] isEnabled in
                 guard let self else { return }
                 if isEnabled {
-                    syncNarration()
-                    prefetchUpcomingNarration()
+                    narrationState = .enabled
+                    Task { @MainActor [weak self] in
+                        self?.syncNarration()
+                        self?.prefetchUpcomingNarration()
+                    }
                 } else {
                     stopNarration(clearLast: true)
                     cancelPrefetchTasks()
-                    narrationStatuses = [:]
+                    synthesis.reset()
+                    narrationState = .off
                 }
             }
             .store(in: &settingsCancellables)
@@ -180,7 +185,8 @@ final class WorkAudioPlayer: ObservableObject {
         player.replaceCurrentItem(with: item)
         stopNarration(clearLast: true)
         cancelPrefetchTasks()
-        narrationStatuses = [:]
+        resetOpenRouterSession()
+        narrationState = ttsSettings.isEnabled ? .enabled : .off
         position = max(0, min(resumePosition, track.duration ?? resumePosition))
         duration = track.duration ?? 0
         subtitles = []
@@ -225,7 +231,6 @@ final class WorkAudioPlayer: ObservableObject {
             await MainActor.run {
                 guard self.currentTrack?.id == track.id else { return }
                 self.subtitles = lines
-                self.refreshCachedNarrationStatuses()
                 self.updateSubtitle()
                 self.syncNarration()
             }
@@ -410,6 +415,7 @@ final class WorkAudioPlayer: ObservableObject {
         if !preservingInterruption { wasPlayingBeforeInterruption = false }
         playbackState = playbackState.receiving(.pause)
         player.pause()
+        narrationState = ttsSettings.isEnabled ? .enabled : .off
         stopNarration(clearLast: true)
         cancelPrefetchTasks()
         syncProgress()
@@ -428,6 +434,7 @@ final class WorkAudioPlayer: ObservableObject {
         }
         guard let currentSubtitleIndex, subtitles.indices.contains(currentSubtitleIndex) else {
             stopNarration(clearLast: true)
+            narrationState = .enabled
             return
         }
 
@@ -440,30 +447,27 @@ final class WorkAudioPlayer: ObservableObject {
         guard lastNarrationID != narrationID else { return }
         lastNarrationID = narrationID
         stopNarration(clearLast: false)
-        prefetchTasks[subtitle.id]?.cancel()
-        prefetchTasks[subtitle.id] = nil
-
         let cutoff = narrationCutoff(forSubtitleAt: currentSubtitleIndex)
-        narrationStatuses[subtitle.id] = synthesis.cachedAudio(for: synthesisRequest, hasCredential: ttsSettings.isOpenRouterConfigured) != nil ? .ready : .generating
+        narrationState = synthesis.cachedAudio(for: synthesisRequest, hasCredential: ttsSettings.isOpenRouterConfigured) != nil ? .enabled : .preparing
         narrationTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let outputURL = try await synthesizeWithFallback(synthesisRequest)
+                let audio = try await synthesizeWithFallback(synthesisRequest)
                 guard !Task.isCancelled else { return }
-                narrationStatuses[subtitle.id] = .ready
                 guard ttsSettings.isEnabled,
                       playbackState == .playing,
                       currentNarrationID() == narrationID else { return }
-                let item = AVPlayerItem(url: outputURL)
+                narrationState = audio.isFallback ? .fallback : .enabled
+                if let notice = audio.notice { ttsSettings.runtimeNotice = notice }
+                let item = AVPlayerItem(url: audio.url)
                 narrationPlayer.replaceCurrentItem(with: item)
                 narrationPlayer.volume = Float(ttsSettings.volume)
                 narrationPlayer.play()
                 scheduleNarrationCutoff(at: cutoff, narrationID: narrationID)
             } catch {
                 guard !Task.isCancelled else { return }
-                narrationStatuses[subtitle.id] = .failed
                 guard currentNarrationID() == narrationID else { return }
-                lastNarrationID = nil
+                narrationState = .failed(error.localizedDescription)
                 ttsSettings.runtimeNotice = "旁白生成失败：\(error.localizedDescription)"
             }
         }
@@ -497,23 +501,16 @@ final class WorkAudioPlayer: ObservableObject {
 
         let synthesisRequest = ttsSettings.synthesisRequest(text: text)
         if synthesis.cachedAudio(for: synthesisRequest, hasCredential: ttsSettings.isOpenRouterConfigured) != nil {
-            narrationStatuses[subtitle.id] = .ready
             return
         }
         guard prefetchTasks[subtitle.id] == nil else { return }
 
-        narrationStatuses[subtitle.id] = .generating
         prefetchTasks[subtitle.id] = Task { [weak self] in
             guard let self else { return }
             do {
                 _ = try await synthesizeWithFallback(synthesisRequest)
-                guard !Task.isCancelled else { return }
-                prefetchTasks[subtitle.id] = nil
-                narrationStatuses[subtitle.id] = .ready
             } catch {
-                guard !Task.isCancelled else { return }
-                prefetchTasks[subtitle.id] = nil
-                narrationStatuses[subtitle.id] = .failed
+                // Current playback will surface a remembered failure, without hot-loop retries.
             }
         }
     }
@@ -523,15 +520,7 @@ final class WorkAudioPlayer: ObservableObject {
             task.cancel()
         }
         prefetchTasks = [:]
-    }
-
-    private func refreshCachedNarrationStatuses() {
-        narrationStatuses = Dictionary(uniqueKeysWithValues: subtitles.compactMap { subtitle in
-            let text = subtitle.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            guard synthesis.cachedAudio(for: ttsSettings.synthesisRequest(text: text), hasCredential: ttsSettings.isOpenRouterConfigured) != nil else { return nil }
-            return (subtitle.id, TTSGenerationStatus.ready)
-        })
+        synthesis.cancelPending()
     }
 
     fileprivate static func prefetchIndices(after index: Int, subtitleCount: Int) -> [Int] {
@@ -546,7 +535,8 @@ final class WorkAudioPlayer: ObservableObject {
         narrationCutoffTask?.cancel()
         let delay = max(0, cutoff - position)
         narrationCutoffTask = Task {
-            try? await Task.sleep(for: .seconds(delay))
+            do { try await Task.sleep(for: .seconds(delay)) }
+            catch { return }
             await MainActor.run {
                 guard self.currentNarrationID() == narrationID else { return }
                 self.stopNarration(clearLast: false)
@@ -576,7 +566,8 @@ final class WorkAudioPlayer: ObservableObject {
     private func reloadNarrationConfiguration() {
         stopNarration(clearLast: true)
         cancelPrefetchTasks()
-        refreshCachedNarrationStatuses()
+        synthesis.reset()
+        narrationState = ttsSettings.isEnabled ? .enabled : .off
         syncNarration()
         prefetchUpcomingNarration()
     }
@@ -585,10 +576,14 @@ final class WorkAudioPlayer: ObservableObject {
         synthesis.reset()
     }
 
-    private func synthesizeWithFallback(_ request: TTSSynthesisRequest) async throws -> URL {
-        let audio = try await synthesis.audio(for: request, credential: ttsSettings.openRouterToken())
-        if let notice = audio.notice { ttsSettings.runtimeNotice = notice }
-        return audio.url
+    func retryNarration() {
+        ttsSettings.runtimeNotice = nil
+        reloadNarrationConfiguration()
+    }
+
+    private func synthesizeWithFallback(_ request: TTSSynthesisRequest) async throws -> TTSCoordinator.Audio {
+        let credential = request.model == .edge ? nil : try ttsSettings.openRouterToken()
+        return try await synthesis.audio(for: request, credential: credential)
     }
 
     private func activateAudioSession() {
@@ -730,6 +725,44 @@ final class WorkAudioPlayer: ObservableObject {
     }
 
     #if DEBUG
+    func prepareDebugNarrationPreview() throws {
+        try prepareDebugPlayback()
+        subtitles = [
+            SubtitleLine(start: 0, end: 4, text: "晚安，做个好梦。"),
+            SubtitleLine(start: 4, end: 10, text: "这一行较长，用来检查小屏与大字体下的字幕换行和整行点击区域。"),
+            SubtitleLine(start: 10, end: 20, text: "点击文字旁的空白也可以跳转。")
+        ]
+        currentSubtitleIndex = 0
+        narrationState = .failed("测试状态：网络暂不可用")
+    }
+
+    func runNarrationChecks() async throws {
+        try prepareDebugPlayback()
+        // Let the settings subscription finish initialization before installing the test item.
+        try await Task.sleep(for: .milliseconds(100))
+        let subtitle = SubtitleLine(start: 0, end: 30, text: "截止任务取消验证")
+        subtitles = [subtitle]
+        currentSubtitleIndex = 0
+        let id = currentNarrationID()!
+        narrationPlayer.replaceCurrentItem(with: AVPlayerItem(url: currentTrack!.playbackURL!))
+        scheduleNarrationCutoff(at: 20, narrationID: id)
+        scheduleNarrationCutoff(at: 20, narrationID: id)
+        try await Task.sleep(for: .milliseconds(100))
+        assert(narrationPlayer.currentItem != nil, "Cancelled cutoff must not stop the replacement narration")
+        narrationState = .failed("旧曲失败")
+        loadCurrent(siblings: queue, autoPlay: false)
+        assert(narrationState == .off, "New track must discard old narration state")
+        ttsSettings.isEnabled = true
+        narrationState = .failed("旧句失败")
+        playbackState = .playing
+        currentSubtitleIndex = nil
+        syncNarration()
+        assert(narrationState == .enabled, "Before the first subtitle, stale failure must be cleared")
+        ttsSettings.isEnabled = false
+        pauseCurrent()
+        print("Narration integration checks passed: cutoff cancellation and stale-state reset")
+    }
+
     func prepareDebugPlayback() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("wisimi-playback-check.caf")
         let format = AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1)!
@@ -964,10 +997,12 @@ private struct PlaybackSnapshot: Codable {
     let coverURL: String?
 }
 
-enum TTSGenerationStatus {
-    case generating
-    case ready
-    case failed
+enum NarrationState: Equatable {
+    case off
+    case enabled
+    case preparing
+    case fallback
+    case failed(String)
 }
 
 struct SubtitleLine: Identifiable, Hashable {

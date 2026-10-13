@@ -205,7 +205,7 @@ struct DetailHero: View {
                         } label: {
                             VoiceActorChip(text: actor.name)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PressFeedbackButtonStyle())
                         .copyContextMenu(actor.name, label: "声优名称")
                     }
 
@@ -214,7 +214,7 @@ struct DetailHero: View {
                     } label: {
                         CircleChip(text: work.name)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressFeedbackButtonStyle())
                     .copyContextMenu(work.name, label: "社团名称")
 
                     ForEach(work.tags) { tag in
@@ -223,7 +223,7 @@ struct DetailHero: View {
                         } label: {
                             TagChip(text: tag.name)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PressFeedbackButtonStyle())
                         .copyContextMenu(tag.name, label: "标签")
                     }
                 }

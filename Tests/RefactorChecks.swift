@@ -97,6 +97,18 @@ struct RefactorChecks {
         func request(_ text: String, model: TTSModelID = .minimaxTurbo) -> TTSSynthesisRequest {
             TTSSynthesisRequest(model: model, voiceID: model.defaultVoiceID, text: text, speechRate: 1, expression: .automatic)
         }
+        paid.shouldSuspend = true
+        let prefetch = Task { try await synthesis.audio(for: request("shared"), credential: "test") }
+        try await waitUntil { paid.pending != nil }
+        let current = Task { try await synthesis.audio(for: request("shared"), credential: "test") }
+        try await Task.sleep(for: .milliseconds(50))
+        assert(paid.requests.count == 1, "Current subtitle must reuse in-flight prefetch")
+        paid.pending?.resume(); paid.pending = nil
+        let prefetched = try await prefetch.value
+        let playing = try await current.value
+        assert(prefetched.url == playing.url)
+        paid.shouldSuspend = false
+        paid.requests = []
         let first = try await synthesis.audio(for: request("cached"), credential: "test")
         assert(TTSCache.containsValidAudio(at: first.url))
         _ = try await synthesis.audio(for: request("cached"), credential: nil)
@@ -150,6 +162,13 @@ struct RefactorChecks {
         } catch let error as TTSSynthesisError { assert(error == .invalidResponse) }
         assert(synthesis.cachedAudio(for: request("invalid-audio", model: .edge), hasCredential: false) == nil)
         edge.invalidAudio = false
+        let attempts = edge.requests.count
+        for _ in 0..<5 {
+            do { _ = try await synthesis.audio(for: request("invalid-audio", model: .edge), credential: nil) }
+            catch let error as TTSSynthesisError { assert(error == .invalidResponse) }
+        }
+        assert(edge.requests.count == attempts, "Failed sentence must wait for explicit retry")
+        synthesis.reset()
         _ = try await synthesis.audio(for: request("invalid-audio", model: .edge), credential: nil)
         let edgeCount = edge.requests.count
         _ = try await synthesis.audio(for: request("invalid-audio", model: .edge), credential: nil)
@@ -161,6 +180,8 @@ struct RefactorChecks {
         paid.pending?.resume(); paid.pending = nil
         do { _ = try await old.value; assertionFailure("Old session must be cancelled") }
         catch is CancellationError {}
+        assert(synthesis.cachedAudio(for: request("old-session"), hasCredential: true) == nil,
+               "Cancelled session must not publish generated audio into the cache")
         paid.shouldSuspend = false
         let cancelled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
@@ -434,11 +455,28 @@ struct RefactorChecks {
         assert(retained == Data("retained".utf8))
     }
 
-    static func tokenChecks() throws {
+    @MainActor static func tokenChecks() throws {
         OpenRouterTokenStoreSelfCheck.run()
         let service = "wisimi.refactor-token-errors.\(UUID().uuidString)"
         let token = OpenRouterTokenStore(service: service)
         defer { try? token.delete() }
+        var storedAccessibility: CFString?
+        var storedValue: Data? = Data("existing-token".utf8)
+        let background = OpenRouterTokenStore(service: service, operations: KeychainOperations(
+            read: { _ in (errSecSuccess, storedValue) },
+            update: { _, attributes in
+                storedAccessibility = attributes[kSecAttrAccessible as String] as! CFString?
+                storedValue = attributes[kSecValueData as String] as? Data
+                return errSecSuccess
+            }, add: { _ in errSecSuccess }, delete: { _ in errSecSuccess }))
+        try background.prepareForBackgroundAccess()
+        assert(storedAccessibility == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
+        assert(storedValue == Data("existing-token".utf8), "Updating accessibility must retain the token")
+        let blockedSettings = TTSMixSettings(tokenStore: OpenRouterTokenStore(operations: KeychainOperations(
+            read: { _ in (errSecInteractionNotAllowed, nil) }, update: { _, _ in errSecInteractionNotAllowed },
+            add: { _ in errSecInteractionNotAllowed }, delete: { _ in errSecInteractionNotAllowed })))
+        do { _ = try blockedSettings.openRouterToken(); assertionFailure("Locked Keychain must not be treated as missing token") }
+        catch let error as OpenRouterTokenStoreError { assert(error.errorDescription != nil) }
         do { try token.save("  "); assertionFailure("Empty token must fail") }
         catch let error as OpenRouterTokenStoreError { assert(error.errorDescription != nil) }
         let raw = KeychainItem(service: service, account: "api-token", synchronizable: false)
