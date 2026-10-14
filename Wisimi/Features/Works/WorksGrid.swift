@@ -71,39 +71,50 @@ struct PaginationControls: View {
     let onPageChanged: (Int) -> Void
 
     var body: some View {
-        HStack(spacing: 16) {
-            Button {
-                onPageChanged(currentPage - 1)
-            } label: {
-                Image(systemName: "chevron.left")
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(.rect)
-            }
-            .accessibilityLabel("上一页")
-            .disabled(currentPage <= 1 || isLoading)
+        HStack(spacing: 4) {
+            pageButton(
+                symbol: "chevron.left",
+                label: "上一页",
+                page: currentPage - 1,
+                disabled: currentPage <= 1 || isLoading
+            )
 
             Text("\(currentPage)/\(totalPages.map(String.init) ?? "?")")
-                .font(.subheadline.weight(.semibold))
+                .font(.caption.weight(.semibold))
                 .monospacedDigit()
-                .frame(minWidth: 64)
+                .frame(minWidth: 44)
 
-            Button {
-                onPageChanged(currentPage + 1)
-            } label: {
-                Image(systemName: "chevron.right")
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(.rect)
-            }
-            .accessibilityLabel("下一页")
-            .disabled((totalPages.map { currentPage >= $0 } ?? true) || isLoading)
+            pageButton(
+                symbol: "chevron.right",
+                label: "下一页",
+                page: currentPage + 1,
+                disabled: (totalPages.map { currentPage >= $0 } ?? true) || isLoading
+            )
 
             if isLoading {
                 ProgressView()
                     .controlSize(.small)
             }
         }
-        .buttonStyle(.bordered)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
+        .padding(.vertical, 2)
+    }
+
+    private func pageButton(symbol: String, label: String, page: Int, disabled: Bool) -> some View {
+        Button {
+            onPageChanged(page)
+        } label: {
+            Image(systemName: symbol)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tint)
+                .frame(width: 30, height: 30)
+                .background(.quaternary, in: .circle)
+                .opacity(disabled ? 0.35 : 1)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .disabled(disabled)
     }
 }
