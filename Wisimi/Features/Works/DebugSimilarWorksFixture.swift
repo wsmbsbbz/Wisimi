@@ -62,7 +62,10 @@ private final class SimilarWorksFixtureProtocol: URLProtocol, @unchecked Sendabl
     private func summary(id: Int) -> [String: Any] {
         ["id": id, "title": "雨夜书房 · 安静的朗读与窗外雨声 \(id)", "name": "夜间电台",
          "duration": 5400, "rate_average_2dp": 4.8, "has_subtitle": id.isMultiple(of: 2),
-         "tags": [], "vas": [["id": 1, "name": "轻声朗读"]]]
+         "tags": id.isMultiple(of: 2)
+            ? [["id": 1, "name": "雨声"], ["id": 2, "name": "朗读"], ["id": 3, "name": "环境音"], ["id": 4, "name": "安静的夜晚"]]
+            : [["id": 1, "name": "雨声"]],
+         "vas": [["id": 1, "name": "轻声朗读"]]]
     }
 }
 #endif

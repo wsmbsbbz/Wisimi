@@ -68,7 +68,6 @@ enum WorksFilterContextSelfCheck {
 
 enum WorksRoute: Hashable {
     case detail(Int)
-    case similarWorks(SimilarWorksState)
     case downloads
     case player
 

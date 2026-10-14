@@ -8,6 +8,7 @@ struct WorkDetailView: View {
     let reservesMiniPlayerSpace: Bool
     let onSearch: (String, String) -> Void
     let onLoginRequired: () -> Void
+    let onOpenWork: (Int) -> Void
 
     @State private var downloads = DownloadStore.shared
     @State private var pageState: WorkDetailPageState
@@ -18,7 +19,7 @@ struct WorkDetailView: View {
 
     init(workID: Int, client: ASMRClient, auth: AuthSession, player: WorkAudioPlayer,
          reservesMiniPlayerSpace: Bool, onSearch: @escaping (String, String) -> Void,
-         onLoginRequired: @escaping () -> Void) {
+         onLoginRequired: @escaping () -> Void, onOpenWork: @escaping (Int) -> Void) {
         self.workID = workID
         self.client = client
         self.auth = auth
@@ -26,6 +27,7 @@ struct WorkDetailView: View {
         self.reservesMiniPlayerSpace = reservesMiniPlayerSpace
         self.onSearch = onSearch
         self.onLoginRequired = onLoginRequired
+        self.onOpenWork = onOpenWork
         _pageState = State(initialValue: WorkDetailPageState(client: client))
         _similarWorks = State(initialValue: SimilarWorksState(workID: workID, client: client))
     }
@@ -71,14 +73,19 @@ struct WorkDetailView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
 
-                        SimilarWorksSection(state: similarWorks)
+                        if similarWorks.shouldShowSection {
+                            SimilarWorksSection(state: similarWorks, onSelect: { onOpenWork($0.id) }, onReposition: {
+                                scrollPosition.scrollTo(id: "similar-works", anchor: .top)
+                            })
                             .id("similar-works")
+                        }
 
                         if reservesMiniPlayerSpace {
                             Color.clear.frame(height: miniPlayerAvoidanceHeight)
                         }
                     }
                     .padding()
+                    .scrollTargetLayout()
                 }
                 .scrollPosition($scrollPosition)
             } else {
@@ -99,13 +106,20 @@ struct WorkDetailView: View {
         .task {
             await loadDetail(force: false)
         }
+        .task(id: pageState.work?.id) {
+            guard pageState.work?.id == workID else { return }
+            await similarWorks.loadIfNeeded()
+        }
         #if DEBUG
         .onChange(of: pageState.work?.id) {
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("similar") == true {
-                scrollPosition.scrollTo(id: "similar-works", anchor: .top)
-            }
             if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("download") == true {
                 scrollPosition.scrollTo(id: "track-browser", anchor: .top)
+            }
+        }
+        .onChange(of: similarWorks.shouldShowSection) {
+            if similarWorks.shouldShowSection, ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("similar") == true {
+                similarWorks.isExpanded = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SIMILAR_EXPANDED"] == "1"
+                scrollPosition.scrollTo(id: "similar-works", anchor: .top)
             }
         }
         #endif

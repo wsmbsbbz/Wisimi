@@ -3,14 +3,12 @@ import Observation
 
 @MainActor
 @Observable
-final class SimilarWorksState: Hashable {
+final class SimilarWorksState {
     let workID: Int
-    private(set) var works: [WorkSummary] = []
-    private(set) var pagination: WorksPagination?
-    private(set) var isLoading = false
-    private(set) var errorMessage: String?
-    private var requestedPage = 1
-    private var loadTask: Task<Void, Never>?
+    let page = WorksPageState()
+    var isExpanded = false
+    private(set) var previewWorks: [WorkSummary] = []
+    private(set) var isRetrying = false
     private let client: ASMRClient
 
     init(workID: Int, client: ASMRClient) {
@@ -18,48 +16,40 @@ final class SimilarWorksState: Hashable {
         self.client = client
     }
 
-    // 路由按页面实例标识，分页更新不会改变导航身份。
-    nonisolated static func == (lhs: SimilarWorksState, rhs: SimilarWorksState) -> Bool { lhs === rhs }
-    nonisolated func hash(into hasher: inout Hasher) { hasher.combine(ObjectIdentifier(self)) }
-
-    var hasMore: Bool {
-        guard let pagination else { return false }
-        return pagination.currentPage < pagination.totalPages
+    var shouldShowSection: Bool {
+        !previewWorks.isEmpty || page.errorMessage != nil || isRetrying
     }
+
+    var displayedWorks: [WorkSummary] { isExpanded ? page.works : previewWorks }
 
     func loadIfNeeded() async {
-        if let loadTask { await loadTask.value }
-        guard pagination == nil, errorMessage == nil, !Task.isCancelled else { return }
-        await load(page: 1)
+        guard page.pagination == nil, page.errorMessage == nil, !page.isLoading else { return }
+        await loadPage(1)
     }
 
-    func loadMore() async {
-        guard let pagination, hasMore else { return }
-        await load(page: pagination.currentPage + 1)
-    }
+    func loadPage(_ number: Int) async {
+        guard number > 0, !Task.isCancelled else { return }
+        if let pagination = page.pagination {
+            guard number <= pagination.totalPages else { return }
+            if number == page.currentPage, page.errorMessage == nil { return }
+        } else if number != 1 { return }
 
-    func retry() async { await load(page: requestedPage) }
-
-    private func load(page: Int) async {
-        guard !isLoading, !Task.isCancelled else { return }
-        requestedPage = page
-        isLoading = true
-        errorMessage = nil
-        let task = Task {
-            defer { isLoading = false; loadTask = nil }
-            do {
-                let response = try await client.fetchSimilarWorks(workID: workID, page: page)
-                try Task.checkCancellation()
-                var seen = Set(works.map(\.id))
-                let additions = response.works.filter { $0.id != workID && seen.insert($0.id).inserted }
-                works.append(contentsOf: additions)
-                pagination = response.pagination
-            } catch is CancellationError {
-            } catch {
-                if !Task.isCancelled { errorMessage = error.userFacingMessage }
-            }
+        await page.load(page: number) { [client, workID] in
+            let response = try await client.fetchSimilarWorks(workID: workID, page: number)
+            var seen = Set<Int>()
+            return WorksResponse(
+                works: response.works.filter { $0.id != workID && seen.insert($0.id).inserted },
+                pagination: response.pagination
+            )
         }
-        loadTask = task
-        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        guard !Task.isCancelled, page.errorMessage == nil, page.pagination != nil, page.currentPage == 1 else { return }
+        previewWorks = Array(page.works.prefix(4))
+    }
+
+    func retry() async {
+        guard !page.isLoading else { return }
+        isRetrying = true
+        defer { isRetrying = false }
+        await loadPage(page.requestedPage)
     }
 }

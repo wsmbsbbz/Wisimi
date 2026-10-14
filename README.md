@@ -24,7 +24,7 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 搜索、筛选和模式切换以最新请求为准；刷新失败保留已有内容并提供重试
 - 读取 VTT/LRC 字幕，播放时显示当前字幕并支持点击字幕跳转
 - 使用 Edge 或自备 OpenRouter 凭据生成中文旁白，支持固定模型、精选音色、表达预设、音量和模型专属语速；MiniMax 仅提供 6 种适合 ASMR 的精选女音，并额外支持固定句内停顿、呼吸、叹息、吸气、呼气、哼唱与唇音效果
-- 作品详情展示相似作品预览，可查看全部并分页加载；无需登录，浏览保持播放队列与返回位置
+- 作品详情展示首页同款的相似作品瀑布流，默认四个作品，可页内展开、收起和翻页；空结果隐藏，无需登录，浏览保持播放队列与返回位置
 - 登录 asmr.one 账号，保存 token 到 Keychain
 - 标记作品状态：想听、在听、听过、重听、搁置
 - 创建、编辑、删除播放列表，并把作品加入或移出播放列表
@@ -104,4 +104,4 @@ Debug 模拟器中设置 `WISIMI_NARRATION_CHECKS=1` 可验证旁白截止任务
 
 应用代码采用 MIT。Edge v2 签名文件遵循 LGPL-3.0，第三方通知与 GPL/LGPL 文本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，也随应用资源提供。
 
-Debug 模拟器中设置 `WISIMI_DEBUG_SCREEN=similar` 使用中性的离线相似作品夹具；`similar-empty`、`similar-error`、`similar-page-error` 分别验证空态、首次失败和第二页失败；`similar-pagination` 与 `similar-page-error` 每页两项，便于直接点击分页入口。叠加 `WISIMI_DEBUG_SIMILAR_MINIPLAYER=1` 显示本地测试迷你播放器，叠加 `WISIMI_DEBUG_LARGE_TEXT=1` 验证辅助功能大字体。验收需覆盖“查看全部”、加载更多、失败重试、作品详情与播放器连续返回，以及不同 iPhone 尺寸下的点击与滚动。
+Debug 模拟器中设置 `WISIMI_DEBUG_SCREEN=similar` 使用中性的离线相似作品夹具；`similar-empty`、`similar-error`、`similar-page-error` 分别验证空态、首次失败和第二页失败；`similar-pagination` 与 `similar-page-error` 每页两项，便于直接点击分页入口。叠加 `WISIMI_DEBUG_SIMILAR_MINIPLAYER=1` 显示本地测试迷你播放器，叠加 `WISIMI_DEBUG_LARGE_TEXT=1` 验证辅助功能大字体。叠加 `WISIMI_DEBUG_SIMILAR_EXPANDED=1` 直接展示展开状态。验收覆盖页内展开、收起、上下分页、空结果隐藏与完整标签卡片；翻页后结果替换，标题保持可达。

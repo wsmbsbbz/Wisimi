@@ -326,8 +326,6 @@ struct RefactorChecks {
 
     @MainActor static func similarWorksChecks() async throws {
         let state = SimilarWorksState(workID: 1, client: client())
-        let route = WorksRoute.similarWorks(state)
-        let originalHash = route.hashValue
         var pages: [Int] = []
         var fail = false
         HTTPStub.respond = { request in
@@ -340,99 +338,80 @@ struct RefactorChecks {
             let page = body["page"] as! Int
             pages.append(page)
             if fail { throw URLError(.notConnectedToInternet) }
-            return (200, similarResponse(page: page, ids: page == 1 ? [1, 2, 2, 3] : page == 2 ? [3, 4, 4] : []))
+            return (200, similarResponse(page: page, ids: page == 1 ? [1, 2, 2, 3, 4, 5, 6] : page == 2 ? [3, 7, 7] : []))
         }
-        await state.loadMore() // No first page yet.
+        assert(!state.shouldShowSection)
+        await state.loadPage(0)
+        await state.loadPage(2) // No first-page metadata yet.
         assert(pages.isEmpty)
         await state.loadIfNeeded()
-        assert(state.works.map(\.id) == [2, 3] && state.hasMore && !state.isLoading)
-        await state.loadIfNeeded() // Detail -> all -> detail shares the first page.
-        assert(pages == [1] && route.hashValue == originalHash)
-        assert(route == .similarWorks(state))
-        assert(route != .similarWorks(SimilarWorksState(workID: 1, client: client())))
-        let path: [WorksRoute] = [.detail(1), route, .detail(2), .player]
-        assert(WorksRoute.replacingPlayer(withDetail: 2, in: path) == Array(path.dropLast()))
-        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.detail(1), route, .player]) == [.detail(1), route, .detail(1)])
-
-        fail = true
-        await state.loadMore()
-        assert(state.errorMessage != nil && state.works.map(\.id) == [2, 3] && state.pagination?.currentPage == 1)
+        assert(state.page.works.map(\.id) == [2, 3, 4, 5, 6])
+        assert(state.displayedWorks.map(\.id) == [2, 3, 4, 5] && state.shouldShowSection)
+        state.isExpanded = true
+        assert(state.displayedWorks.count == 5)
         await state.loadIfNeeded()
-        assert(pages == [1, 2])
+        await state.loadPage(1)
+        assert(pages == [1])
+        fail = true
+        await state.loadPage(2)
+        assert(state.page.errorMessage != nil && state.page.works.count == 5 && state.page.currentPage == 1)
         fail = false
         await state.retry()
-        assert(pages == [1, 2, 2] && state.works.map(\.id) == [2, 3, 4] && state.errorMessage == nil)
-        assert(route.hashValue == originalHash)
-        await state.loadMore()
-        await state.loadMore()
-        assert(pages == [1, 2, 2, 3] && !state.hasMore && state.pagination?.currentPage == 3)
+        assert(pages == [1, 2, 2] && state.page.works.map(\.id) == [3, 7] && state.page.currentPage == 2)
+        assert(state.page.errorMessage == nil && !state.isRetrying)
+        state.isExpanded = false
+        assert(state.displayedWorks.map(\.id) == [2, 3, 4, 5])
+        state.isExpanded = true
+        assert(state.displayedWorks.map(\.id) == [3, 7])
+        await state.loadPage(1)
+        assert(state.page.works.map(\.id) == [2, 3, 4, 5, 6], "Going back must not remove previously seen works")
+        await state.loadPage(3)
+        assert(state.page.works.isEmpty && state.shouldShowSection && state.page.currentPage == 3)
+        await state.loadPage(4)
+        assert(pages == [1, 2, 2, 1, 3])
 
         let empty = SimilarWorksState(workID: 1, client: client())
         HTTPStub.respond = { _ in (200, similarResponse(page: 1, ids: [], total: 0)) }
         await empty.loadIfNeeded()
-        assert(empty.works.isEmpty && empty.pagination != nil && !empty.hasMore)
+        assert(!empty.shouldShowSection && empty.page.pagination != nil)
         let failed = SimilarWorksState(workID: 1, client: client())
         HTTPStub.respond = { _ in (500, "") }
         await failed.loadIfNeeded()
-        assert(failed.errorMessage != nil && failed.pagination == nil && !failed.isLoading)
-        HTTPStub.respond = { _ in (200, similarResponse(page: 1, ids: [2])) }
-        await failed.retry()
-        assert(failed.errorMessage == nil && failed.works.count == 1)
-
+        assert(failed.shouldShowSection && failed.page.errorMessage != nil)
         let gate = RequestGate()
         HTTPStub.hold = { gate.hold($0) }
-        let cancelled = SimilarWorksState(workID: 1, client: client())
-        let pending = Task { await cancelled.loadIfNeeded() }
+        let retrying = Task { await failed.retry() }
         try await waitUntil { gate.count == 1 }
-        let shared = Task { await cancelled.loadIfNeeded() }
-        await Task.yield()
-        await cancelled.retry() // A second tap cannot duplicate an in-flight request.
+        assert(failed.shouldShowSection && failed.isRetrying && failed.page.errorMessage == nil)
+        await failed.retry()
+        await failed.loadIfNeeded()
         assert(gate.count == 1)
         gate.finish { _ in similarResponse(page: 1, ids: [2]) }
-        await pending.value
-        await shared.value
-        assert(cancelled.works.map(\.id) == [2])
-
-        let abandoned = SimilarWorksState(workID: 1, client: client())
-        let abandonedTask = Task { await abandoned.loadIfNeeded() }
-        try await waitUntil { gate.count == 1 }
-        abandonedTask.cancel()
-        await abandonedTask.value
-        gate.finish { _ in similarResponse(page: 1, ids: [99]) }
-        assert(abandoned.works.isEmpty && abandoned.errorMessage == nil && !abandoned.isLoading)
+        await retrying.value
+        assert(failed.displayedWorks.count == 1 && !failed.isRetrying)
         HTTPStub.hold = nil
+
+        HTTPStub.respond = { _ in (200, similarResponse(page: 1, ids: [2])) }
+        let abandoned = SimilarWorksState(workID: 1, client: client())
         await abandoned.loadIfNeeded()
-        assert(abandoned.works.map(\.id) == [2])
         HTTPStub.hold = { gate.hold($0) }
-        let paging = Task { await abandoned.loadMore() }
+        let paging = Task { await abandoned.loadPage(2) }
         try await waitUntil { gate.count == 1 }
         paging.cancel()
         await paging.value
         gate.finish { _ in similarResponse(page: 2, ids: [99]) }
-        assert(abandoned.works.map(\.id) == [2] && abandoned.pagination?.currentPage == 1 && abandoned.errorMessage == nil)
+        assert(abandoned.page.works.map(\.id) == [2] && abandoned.page.currentPage == 1 && abandoned.page.errorMessage == nil)
         HTTPStub.hold = nil
-        HTTPStub.respond = { _ in (200, similarResponse(page: 2, ids: [2, 3])) }
+        HTTPStub.respond = { _ in (200, similarResponse(page: 2, ids: [3])) }
         await abandoned.retry()
-        assert(abandoned.works.map(\.id) == [2, 3] && abandoned.pagination?.currentPage == 2)
-        HTTPStub.respond = { _ in (500, "") }
-        await abandoned.loadMore()
-        assert(abandoned.errorMessage != nil)
-        HTTPStub.hold = { gate.hold($0) }
-        let retrying = Task { await abandoned.retry() }
-        try await waitUntil { gate.count == 1 }
-        retrying.cancel()
-        await retrying.value
-        gate.finish { _ in similarResponse(page: 3, ids: [99]) }
-        HTTPStub.hold = nil
-        assert(abandoned.works.map(\.id) == [2, 3] && abandoned.pagination?.currentPage == 2 && abandoned.errorMessage == nil)
+        assert(abandoned.page.works.map(\.id) == [3] && abandoned.previewWorks.map(\.id) == [2])
         let preCancelled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            await abandoned.loadMore()
-            await abandoned.loadIfNeeded()
+            await abandoned.loadPage(3)
         }
         await preCancelled.value
-        assert(abandoned.pagination?.currentPage == 2)
-        print("Similar works checks passed: request, shared preview, pagination, deduplication, retry, empty, cancellation and navigation")
+        assert(abandoned.page.currentPage == 2)
+        print("Similar works checks passed: inline preview, page replacement, previous page, empty hiding, retry and cancellation")
     }
 
     @MainActor static func raceChecks() async throws {
