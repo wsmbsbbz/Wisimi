@@ -11,6 +11,7 @@ struct WorkDetailView: View {
 
     @State private var downloads = DownloadStore.shared
     @State private var pageState: WorkDetailPageState
+    @State private var similarWorks: SimilarWorksState
     @State private var scrollPosition = ScrollPosition()
     @State private var isMarkMenuPresented = false
     @State private var isPlaylistMenuPresented = false
@@ -26,6 +27,7 @@ struct WorkDetailView: View {
         self.onSearch = onSearch
         self.onLoginRequired = onLoginRequired
         _pageState = State(initialValue: WorkDetailPageState(client: client))
+        _similarWorks = State(initialValue: SimilarWorksState(workID: workID, client: client))
     }
 
     var body: some View {
@@ -69,6 +71,9 @@ struct WorkDetailView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
 
+                        SimilarWorksSection(state: similarWorks)
+                            .id("similar-works")
+
                         if reservesMiniPlayerSpace {
                             Color.clear.frame(height: miniPlayerAvoidanceHeight)
                         }
@@ -96,6 +101,9 @@ struct WorkDetailView: View {
         }
         #if DEBUG
         .onChange(of: pageState.work?.id) {
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("similar") == true {
+                scrollPosition.scrollTo(id: "similar-works", anchor: .top)
+            }
             if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("download") == true {
                 scrollPosition.scrollTo(id: "track-browser", anchor: .top)
             }

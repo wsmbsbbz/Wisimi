@@ -27,7 +27,12 @@ struct WorksListView: View {
     #endif
 
     init() {
+        #if DEBUG
+        let client = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("similar") == true
+            ? DebugSimilarWorksFixture.client() : ASMRClient()
+        #else
         let client = ASMRClient()
+        #endif
         let ttsSettings = TTSMixSettings()
         self.client = client
         _browser = State(initialValue: WorksBrowserState(client: client, catalog: PlaylistCatalog(client: client)))
@@ -37,6 +42,12 @@ struct WorksListView: View {
         _auth = StateObject(wrappedValue: AuthSession(client: client))
         #if DEBUG
         let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
+        if debugScreen?.hasPrefix("similar") == true {
+            _path = State(initialValue: [.detail(DebugSimilarWorksFixture.workID)])
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SIMILAR_MINIPLAYER"] == "1" {
+                try? player.prepareDebugPlayback()
+            }
+        }
         _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
         if debugScreen?.hasPrefix("downloads") == true {
             _path = State(initialValue: [.downloads])
@@ -203,6 +214,8 @@ struct WorksListView: View {
                     )
                 case .downloads:
                     DownloadsView { path.append(.detail($0)) }
+                case .similarWorks(let state):
+                    SimilarWorksListView(state: state, reservesMiniPlayerSpace: shouldShowMiniPlayer)
                 case .player:
                     PlayerView(player: player, openWorkDetail: openPlayingWorkDetail)
                 }

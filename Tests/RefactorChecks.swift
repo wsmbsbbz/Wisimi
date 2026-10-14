@@ -82,6 +82,7 @@ struct RefactorChecks {
         try await speechChecks()
         try await browserChecks()
         try await detailChecks()
+        try await similarWorksChecks()
         try await raceChecks()
         try await settingsChecks()
         try keychainChecks()
@@ -299,6 +300,139 @@ struct RefactorChecks {
         assert(detail.markMessage == nil)
         await detail.load(workID: 2, token: nil, force: true)
         assert(detail.currentPath.isEmpty && !detail.isPathMenuExpanded)
+    }
+
+    static func requestBody(_ request: URLRequest) throws -> [String: Any] {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        return try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    }
+
+    static func similarResponse(page: Int, ids: [Int], total: Int = 60) -> String {
+        let works = ids.map { id in
+            ["id": id, "title": "雨声", "name": "电台", "has_subtitle": true, "tags": [], "vas": []] as [String: Any]
+        }
+        let json: [String: Any] = ["works": works, "pagination": ["currentPage": page, "pageSize": 20, "totalCount": total]]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: json), as: UTF8.self)
+    }
+
+    @MainActor static func similarWorksChecks() async throws {
+        let state = SimilarWorksState(workID: 1, client: client())
+        let route = WorksRoute.similarWorks(state)
+        let originalHash = route.hashValue
+        var pages: [Int] = []
+        var fail = false
+        HTTPStub.respond = { request in
+            assert(request.url!.path.hasSuffix("recommender/item-neighbors"))
+            assert(request.httpMethod == "POST" && request.value(forHTTPHeaderField: "Authorization") == nil)
+            assert(request.value(forHTTPHeaderField: "User-Agent") == "Wisimi/1.0")
+            let body = try requestBody(request)
+            assert(body["itemId"] as? String == "1" && body["keyword"] as? String == "")
+            assert((body["localSubtitledWorks"] as? [Int]) == [] && (body["withPlaylistStatus"] as? [Int]) == [])
+            let page = body["page"] as! Int
+            pages.append(page)
+            if fail { throw URLError(.notConnectedToInternet) }
+            return (200, similarResponse(page: page, ids: page == 1 ? [1, 2, 2, 3] : page == 2 ? [3, 4, 4] : []))
+        }
+        await state.loadMore() // No first page yet.
+        assert(pages.isEmpty)
+        await state.loadIfNeeded()
+        assert(state.works.map(\.id) == [2, 3] && state.hasMore && !state.isLoading)
+        await state.loadIfNeeded() // Detail -> all -> detail shares the first page.
+        assert(pages == [1] && route.hashValue == originalHash)
+        assert(route == .similarWorks(state))
+        assert(route != .similarWorks(SimilarWorksState(workID: 1, client: client())))
+        let path: [WorksRoute] = [.detail(1), route, .detail(2), .player]
+        assert(WorksRoute.replacingPlayer(withDetail: 2, in: path) == Array(path.dropLast()))
+        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.detail(1), route, .player]) == [.detail(1), route, .detail(1)])
+
+        fail = true
+        await state.loadMore()
+        assert(state.errorMessage != nil && state.works.map(\.id) == [2, 3] && state.pagination?.currentPage == 1)
+        await state.loadIfNeeded()
+        assert(pages == [1, 2])
+        fail = false
+        await state.retry()
+        assert(pages == [1, 2, 2] && state.works.map(\.id) == [2, 3, 4] && state.errorMessage == nil)
+        assert(route.hashValue == originalHash)
+        await state.loadMore()
+        await state.loadMore()
+        assert(pages == [1, 2, 2, 3] && !state.hasMore && state.pagination?.currentPage == 3)
+
+        let empty = SimilarWorksState(workID: 1, client: client())
+        HTTPStub.respond = { _ in (200, similarResponse(page: 1, ids: [], total: 0)) }
+        await empty.loadIfNeeded()
+        assert(empty.works.isEmpty && empty.pagination != nil && !empty.hasMore)
+        let failed = SimilarWorksState(workID: 1, client: client())
+        HTTPStub.respond = { _ in (500, "") }
+        await failed.loadIfNeeded()
+        assert(failed.errorMessage != nil && failed.pagination == nil && !failed.isLoading)
+        HTTPStub.respond = { _ in (200, similarResponse(page: 1, ids: [2])) }
+        await failed.retry()
+        assert(failed.errorMessage == nil && failed.works.count == 1)
+
+        let gate = RequestGate()
+        HTTPStub.hold = { gate.hold($0) }
+        let cancelled = SimilarWorksState(workID: 1, client: client())
+        let pending = Task { await cancelled.loadIfNeeded() }
+        try await waitUntil { gate.count == 1 }
+        let shared = Task { await cancelled.loadIfNeeded() }
+        await Task.yield()
+        await cancelled.retry() // A second tap cannot duplicate an in-flight request.
+        assert(gate.count == 1)
+        gate.finish { _ in similarResponse(page: 1, ids: [2]) }
+        await pending.value
+        await shared.value
+        assert(cancelled.works.map(\.id) == [2])
+
+        let abandoned = SimilarWorksState(workID: 1, client: client())
+        let abandonedTask = Task { await abandoned.loadIfNeeded() }
+        try await waitUntil { gate.count == 1 }
+        abandonedTask.cancel()
+        await abandonedTask.value
+        gate.finish { _ in similarResponse(page: 1, ids: [99]) }
+        assert(abandoned.works.isEmpty && abandoned.errorMessage == nil && !abandoned.isLoading)
+        HTTPStub.hold = nil
+        await abandoned.loadIfNeeded()
+        assert(abandoned.works.map(\.id) == [2])
+        HTTPStub.hold = { gate.hold($0) }
+        let paging = Task { await abandoned.loadMore() }
+        try await waitUntil { gate.count == 1 }
+        paging.cancel()
+        await paging.value
+        gate.finish { _ in similarResponse(page: 2, ids: [99]) }
+        assert(abandoned.works.map(\.id) == [2] && abandoned.pagination?.currentPage == 1 && abandoned.errorMessage == nil)
+        HTTPStub.hold = nil
+        HTTPStub.respond = { _ in (200, similarResponse(page: 2, ids: [2, 3])) }
+        await abandoned.retry()
+        assert(abandoned.works.map(\.id) == [2, 3] && abandoned.pagination?.currentPage == 2)
+        HTTPStub.respond = { _ in (500, "") }
+        await abandoned.loadMore()
+        assert(abandoned.errorMessage != nil)
+        HTTPStub.hold = { gate.hold($0) }
+        let retrying = Task { await abandoned.retry() }
+        try await waitUntil { gate.count == 1 }
+        retrying.cancel()
+        await retrying.value
+        gate.finish { _ in similarResponse(page: 3, ids: [99]) }
+        HTTPStub.hold = nil
+        assert(abandoned.works.map(\.id) == [2, 3] && abandoned.pagination?.currentPage == 2 && abandoned.errorMessage == nil)
+        let preCancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await abandoned.loadMore()
+            await abandoned.loadIfNeeded()
+        }
+        await preCancelled.value
+        assert(abandoned.pagination?.currentPage == 2)
+        print("Similar works checks passed: request, shared preview, pagination, deduplication, retry, empty, cancellation and navigation")
     }
 
     @MainActor static func raceChecks() async throws {

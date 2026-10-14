@@ -49,6 +49,17 @@ struct ASMRClient {
         )
     }
 
+    func fetchSimilarWorks(workID: Int, page: Int = 1) async throws -> WorksResponse {
+        var request = try request(
+            url: baseURL.appending(path: "recommender/item-neighbors"),
+            method: "POST",
+            body: SimilarWorksRequest(itemId: String(workID), page: page)
+        )
+        request.setValue("Wisimi/1.0", forHTTPHeaderField: "User-Agent")
+        let data = try await data(for: request)
+        return try decoder.decode(WorksResponse.self, from: data)
+    }
+
     func fetchFavorites(page: Int = 1, token: String, filter: ReviewFilter = .default) async throws -> WorksResponse {
         try await fetch(reviewURL(page: page, filter: filter), token: token)
     }
@@ -419,6 +430,14 @@ private struct PopularRequest: Encodable {
     let keyword = " "
     let page: Int
     let subtitle: Int
+    let localSubtitledWorks: [Int] = []
+    let withPlaylistStatus: [Int] = []
+}
+
+private struct SimilarWorksRequest: Encodable {
+    let keyword = ""
+    let itemId: String
+    let page: Int
     let localSubtitledWorks: [Int] = []
     let withPlaylistStatus: [Int] = []
 }

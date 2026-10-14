@@ -24,6 +24,7 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 搜索、筛选和模式切换以最新请求为准；刷新失败保留已有内容并提供重试
 - 读取 VTT/LRC 字幕，播放时显示当前字幕并支持点击字幕跳转
 - 使用 Edge 或自备 OpenRouter 凭据生成中文旁白，支持固定模型、精选音色、表达预设、音量和模型专属语速；MiniMax 仅提供 6 种适合 ASMR 的精选女音，并额外支持固定句内停顿、呼吸、叹息、吸气、呼气、哼唱与唇音效果
+- 作品详情展示相似作品预览，可查看全部并分页加载；无需登录，浏览保持播放队列与返回位置
 - 登录 asmr.one 账号，保存 token 到 Keychain
 - 标记作品状态：想听、在听、听过、重听、搁置
 - 创建、编辑、删除播放列表，并把作品加入或移出播放列表
@@ -54,7 +55,7 @@ sh scripts/check-downloads.sh
 bash scripts/check-refactor.sh
 ```
 
-`check-refactor.sh` 使用本地音频样本、URLSession 测试响应和隔离的 Keychain 项验证旁白缓存与回退、列表请求、播放列表编辑、详情加载与标记竞态、配置归一化和凭据错误路径。测试不调用远程 TTS，不产生付费合成请求。使用 LLVM 统计重构的八个核心模块，分别强制行、函数与区域覆盖率不低于 80%；该统计不代表整个应用的 UI 覆盖率。
+`check-refactor.sh` 使用本地音频样本、URLSession 测试响应和隔离的 Keychain 项验证旁白缓存与回退、列表请求、播放列表编辑、详情加载与标记竞态、配置归一化和凭据错误路径。测试不调用远程 TTS，不产生付费合成请求。使用 LLVM 统计重构的九个核心模块，分别强制行、函数与区域覆盖率不低于 80%；该统计不代表整个应用的 UI 覆盖率。
 
 Debug 模拟器中设置 `WISIMI_PLAYBACK_CHECKS=1` 可运行本地音频播放与睡眠定时器集成自检；设置 `WISIMI_WORKS_CHECKS=1` 可运行列表竞态自检。设置 `WISIMI_VIDEO_CHECKS=1` 可运行本机生成的 H.264 + AAC MP4 集成自检（真实解码、混合队列、画面绑定、字幕跳转、重试及定时停止）。`WISIMI_DEBUG_SCREEN=video` 提供本地视频界面验证入口。`WISIMI_DEBUG_SCREEN=player` 或 `mini-player` 提供播放器预览，叠加 `WISIMI_SLEEP_TIMER=1` 显示活动定时器；`WISIMI_DEBUG_SCREEN=list-error` 显示刷新失败保留内容的场景。上述入口只存在于 Debug 构建。
 
@@ -102,3 +103,5 @@ Debug 模拟器中设置 `WISIMI_NARRATION_CHECKS=1` 可验证旁白截止任务
 ## License
 
 应用代码采用 MIT。Edge v2 签名文件遵循 LGPL-3.0，第三方通知与 GPL/LGPL 文本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，也随应用资源提供。
+
+Debug 模拟器中设置 `WISIMI_DEBUG_SCREEN=similar` 使用中性的离线相似作品夹具；`similar-empty`、`similar-error`、`similar-page-error` 分别验证空态、首次失败和第二页失败；`similar-pagination` 与 `similar-page-error` 每页两项，便于直接点击分页入口。叠加 `WISIMI_DEBUG_SIMILAR_MINIPLAYER=1` 显示本地测试迷你播放器，叠加 `WISIMI_DEBUG_LARGE_TEXT=1` 验证辅助功能大字体。验收需覆盖“查看全部”、加载更多、失败重试、作品详情与播放器连续返回，以及不同 iPhone 尺寸下的点击与滚动。
