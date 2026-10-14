@@ -24,10 +24,8 @@ struct SimilarWorksSection: View {
 
             if state.isRetrying && state.previewWorks.isEmpty {
                 ProgressView("正在重试…")
-            } else if let error = state.page.errorMessage {
-                InlineRetryView(message: "相似作品加载失败：\(error)") {
-                    runRequest { await state.retry() }
-                }
+            } else if state.page.errorMessage != nil {
+                retryNotice
             }
 
             MasonryGrid(works: state.displayedWorks, onSelect: onSelect)
@@ -36,6 +34,7 @@ struct SimilarWorksSection: View {
                 if state.page.works.isEmpty && !state.page.isLoading && state.page.errorMessage == nil {
                     Text("本页暂无相似作品").foregroundStyle(.secondary)
                 }
+                if state.page.errorMessage != nil { retryNotice }
                 pagination
             }
         }
@@ -47,6 +46,14 @@ struct SimilarWorksSection: View {
 
     private var title: some View {
         Text("相似作品").font(.title3.weight(.semibold))
+    }
+
+    @ViewBuilder private var retryNotice: some View {
+        if let error = state.page.errorMessage {
+            InlineRetryView(message: "相似作品加载失败：\(error)") {
+                runRequest { await state.retry() }
+            }
+        }
     }
 
     private var disclosureButton: some View {
