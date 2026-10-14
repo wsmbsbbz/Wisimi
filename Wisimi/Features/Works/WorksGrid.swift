@@ -107,4 +107,3 @@ struct PaginationControls: View {
         .padding(.vertical, 10)
     }
 }
-
