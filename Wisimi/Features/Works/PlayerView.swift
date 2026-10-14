@@ -205,7 +205,11 @@ private struct PlayerMainContent: View {
     var body: some View {
         Group {
             if isShowingSubtitles {
-                SubtitleListView(player: player)
+                SubtitleListView(player: player) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        isShowingSubtitles = false
+                    }
+                }
             } else {
                 PlayerCoverContent(player: player, isShowingSubtitles: $isShowingSubtitles)
             }
@@ -302,6 +306,7 @@ private struct PlayerControls: View {
                 Image(systemName: "backward.fill")
                     .font(.title2)
                     .frame(width: 44, height: 44)
+                    .contentShape(.rect)
             }
 
             PlaybackToggleButton(state: player.playbackState, action: player.togglePlayback)
@@ -313,6 +318,7 @@ private struct PlayerControls: View {
                 Image(systemName: "forward.fill")
                     .font(.title2)
                     .frame(width: 44, height: 44)
+                    .contentShape(.rect)
             }
         }
         .buttonStyle(PressFeedbackButtonStyle())
@@ -321,9 +327,11 @@ private struct PlayerControls: View {
 
 private struct SubtitleListView: View {
     @ObservedObject var player: WorkAudioPlayer
-    @GestureState private var isTouchingSubtitleList = false
+    let hideSubtitles: () -> Void
+    @State private var isTouchingSubtitleList = false
     @State private var subtitleAutoScrollResumeAt = Date.distantPast
     @State private var subtitleInteractionToken = 0
+    @State private var subtitleFrames: [UUID: CGRect] = [:]
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -338,38 +346,28 @@ private struct SubtitleListView: View {
                     ScrollView {
                         LazyVStack(spacing: 10) {
                             ForEach(Array(player.subtitles.enumerated()), id: \.element.id) { index, subtitle in
-                                Button {
+                                SubtitleRow(subtitle: subtitle, isCurrent: index == player.currentSubtitleIndex, frameChanged: { frame in
+                                    subtitleFrames[subtitle.id] = frame.isNull ? nil : frame
+                                }) {
                                     player.seek(to: subtitle)
-                                } label: {
-                                    Text(subtitle.text)
-                                            .font(.subheadline)
-                                            .fontWeight(index == player.currentSubtitleIndex ? .semibold : .regular)
-                                            .foregroundStyle(index == player.currentSubtitleIndex ? .primary : .secondary)
-                                            .multilineTextAlignment(.center)
-                                            .frame(maxWidth: .infinity)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                                    .frame(minHeight: 44)
-                                    .contentShape(.rect)
-                                    .animation(.easeOut(duration: 0.25), value: player.currentSubtitleIndex)
                                 }
-                                .buttonStyle(PressFeedbackButtonStyle())
-                                .copyContextMenu(subtitle.text, label: "字幕")
                                 .id(index)
                             }
                         }
                         .padding(.vertical, 18)
                     }
+                    .onScrollPhaseChange { _, phase in
+                        isTouchingSubtitleList = phase != .idle
+                    }
                 }
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .updating($isTouchingSubtitleList) { _, state, _ in
-                        state = true
-                    }
-            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(.rect)
+            .coordinateSpace(.named("subtitle-list"))
+            .simultaneousGesture(SpatialTapGesture().onEnded { value in
+                guard !subtitleFrames.values.contains(where: { $0.contains(value.location) }) else { return }
+                hideSubtitles()
+            })
             .background(.thinMaterial, in: .rect(cornerRadius: 20))
             .overlay {
                 RoundedRectangle(cornerRadius: 20)
@@ -419,6 +417,32 @@ private struct SubtitleListView: View {
     }
 }
 
+private struct SubtitleRow: View {
+    let subtitle: SubtitleLine
+    let isCurrent: Bool
+    let frameChanged: (CGRect) -> Void
+    let seek: () -> Void
+
+    var body: some View {
+        Button(action: seek) {
+            Text(subtitle.text)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(isCurrent ? .primary : .secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .copyContextMenu(subtitle.text, label: "字幕")
+        .accessibilityValue(isCurrent ? "当前字幕" : "")
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("subtitle-list")) } action: { frameChanged($0) }
+        .onDisappear { frameChanged(.null) }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 private struct MixStatusView: View {
     let state: NarrationState
     let retry: () -> Void
@@ -434,15 +458,19 @@ private struct MixStatusView: View {
                 case .failed(let message):
                     Text("旁白暂不可用")
                         .accessibilityLabel("旁白暂不可用：\(message)")
-                    Button("重试", action: retry)
-                        .buttonStyle(.bordered)
+                    Button(action: retry) {
+                        Text("重试")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.borderless)
                 }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(.regularMaterial)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
             .accessibilityIdentifier("narration-status")
         }
     }

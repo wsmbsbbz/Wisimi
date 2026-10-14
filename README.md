@@ -95,7 +95,9 @@ MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用�
 - 更细的错误提示和重试体验
 - 面向不同 iOS 设备尺寸的持续 UI 打磨
 
-Debug 模拟器中设置 `WISIMI_NARRATION_CHECKS=1` 可验证旁白截止任务取消及换曲状态复位；`WISIMI_DEBUG_SCREEN=narration` 提供离线字幕与失败重试布局，不调用远程 TTS。
+Debug 模拟器中设置 `WISIMI_NARRATION_CHECKS=1` 可验证旁白截止任务取消及换曲状态复位；`WISIMI_DEBUG_SCREEN=narration` 提供长中文、无空格英文和显式换行的离线字幕夹具，不调用远程 TTS；叠加 `WISIMI_DEBUG_NARRATION_STATE=enabled` 显示正常混音状态。`WISIMI_DEBUG_SCREEN=work-actions` 使用真实标记和播放列表按钮与标签，点击只操作本地演示状态，不登录或变更远程作品。
+
+叠加 `WISIMI_DEBUG_LARGE_TEXT=1` 使用 SwiftUI 的 `accessibility3` 字体档位，便于离线复现辅助功能布局。界面回归应在隔离的小屏、大屏模拟器及辅助功能大字体下验收：点击字幕文字只跳转时间，点击周边空白返回封面，拖动、复制和旁白重试不返回；长字幕完整换行，高亮切换不改变相邻行间距，混音状态无独立卡片。操作夹具中点击按钮图标、文字和右侧空白均应触发同一动作；开启模拟加载后标记计数不再增加，标签保持与指标胶囊相近的紧凑高度。
 
 ## License
 

@@ -139,8 +139,6 @@ private struct TextChip: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .frame(minHeight: 44)
-            .contentShape(.rect)
     }
 }
 

@@ -22,6 +22,9 @@ struct WorksListView: View {
     @State private var isNarrationSettingsPresented = false
     @State private var pendingMode: WorksMode?
     @FocusState private var isSearchFocused: Bool
+    #if DEBUG
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    #endif
 
     init() {
         let client = ASMRClient()
@@ -53,7 +56,22 @@ struct WorksListView: View {
         #endif
     }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        #if DEBUG
+        Group {
+            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "work-actions" {
+                DebugWorkActionsPreview()
+            } else {
+                browserContent
+            }
+        }
+        .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["WISIMI_DEBUG_LARGE_TEXT"] == "1" ? .accessibility3 : dynamicTypeSize)
+        #else
+        browserContent
+        #endif
+    }
+
+    private var browserContent: some View {
         NavigationStack(path: $path) {
             ScrollViewReader { proxy in
                 ScrollView {

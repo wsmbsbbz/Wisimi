@@ -23,27 +23,12 @@ struct ReviewActionButton: View {
 
     private var markButton: some View {
         Button(action: action) {
-            HStack {
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: isMarked ? "bookmark.slash" : "bookmark")
-                }
-
-                Text(isMarked ? "删除标记" : "标记")
-                    .font(.subheadline.weight(.semibold))
-
-                if let currentStatus {
-                    Text(currentStatus.title)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
-            .contentShape(.rect)
+            WorkActionLabel(
+                title: isMarked ? "删除标记" : "标记",
+                systemImage: isMarked ? "bookmark.slash" : "bookmark",
+                detail: currentStatus?.title,
+                isLoading: isLoading
+            )
         }
         .buttonStyle(.bordered)
         .tint(isMarked ? .red : .accentColor)
@@ -123,14 +108,7 @@ struct PlaylistActionButton: View {
             }
             isMenuPresented.toggle()
         } label: {
-            HStack {
-                Image(systemName: "plus")
-                Text("添加到播放列表")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
+            WorkActionLabel(title: "添加到播放列表", systemImage: "plus")
         }
         .buttonStyle(.bordered)
         .tint(.blue)
@@ -270,5 +248,33 @@ struct PlaylistActionButton: View {
         guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
         playlists[index].worksCount = max(playlists[index].worksCount + (exist ? 1 : -1), 0)
         playlists[index].exist = exist
+    }
+}
+
+private struct WorkActionLabel: View {
+    let title: String
+    let systemImage: String
+    var detail: String?
+    var isLoading = false
+
+    var body: some View {
+        HStack {
+            if isLoading {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: systemImage)
+            }
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(.rect)
     }
 }

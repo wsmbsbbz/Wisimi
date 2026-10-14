@@ -29,7 +29,6 @@ struct PressFeedbackButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .contentShape(.rect)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
             .opacity(configuration.isPressed && reduceMotion ? 0.7 : 1)
     }

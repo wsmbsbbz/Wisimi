@@ -729,11 +729,14 @@ final class WorkAudioPlayer: ObservableObject {
         try prepareDebugPlayback()
         subtitles = [
             SubtitleLine(start: 0, end: 4, text: "晚安，做个好梦。"),
-            SubtitleLine(start: 4, end: 10, text: "这一行较长，用来检查小屏与大字体下的字幕换行和整行点击区域。"),
-            SubtitleLine(start: 10, end: 20, text: "点击文字旁的空白也可以跳转。")
+            SubtitleLine(start: 4, end: 10, text: String(repeating: "这一句较长，用来检查窄屏与大字体下的完整换行，相邻字幕之间应保持清晰间距。", count: 4)),
+            SubtitleLine(start: 10, end: 20, text: String(repeating: "LongSubtitleWithoutSpaces", count: 12)),
+            SubtitleLine(start: 20, end: 28, text: "第一行：显式换行。\n第二行：完整显示。\n第三行：不覆盖下一条字幕。"),
+            SubtitleLine(start: 28, end: 30, text: "点击周边空白返回封面。")
         ]
         currentSubtitleIndex = 0
-        narrationState = .failed("测试状态：网络暂不可用")
+        narrationState = ProcessInfo.processInfo.environment["WISIMI_DEBUG_NARRATION_STATE"] == "enabled"
+            ? .enabled : .failed("测试状态：网络暂不可用")
     }
 
     func runNarrationChecks() async throws {
