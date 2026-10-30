@@ -40,33 +40,12 @@ struct ReviewActionButton: View {
     }
 
     private var markMenu: some View {
-        NavigationStack {
-            Form {
-                Section("状态") {
-                    ForEach(ReviewStatus.allCases) { status in
-                        Button {
-                            isMenuPresented = false
-                            onStatusSelected(status)
-                        } label: {
-                            HStack {
-                                Text(status.title)
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                if currentStatus == status {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .navigationTitle("标记")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("完成") {
+        FormSheet(title: "标记") {
+            Section("状态") {
+                ForEach(ReviewStatus.allCases) { status in
+                    SelectionRow(title: status.title, isSelected: currentStatus == status, style: .single) {
                         isMenuPresented = false
+                        onStatusSelected(status)
                     }
                 }
             }
@@ -122,83 +101,51 @@ struct PlaylistActionButton: View {
     }
 
     private var menu: some View {
-        NavigationStack {
-            Form {
-                Section("播放列表") {
-                    if isLoading && playlists.isEmpty {
-                        ProgressView("加载播放列表...")
-                    } else if playlists.isEmpty {
-                        Text(message ?? "暂无播放列表")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(playlists) { playlist in
-                            Button {
-                                toggle(playlist)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    if updatingIDs.contains(playlist.id) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    } else {
-                                        Image(systemName: playlist.exist ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(playlist.exist ? Color.primary : Color.secondary)
-                                    }
-
-                                    if let systemImage = playlist.systemImage {
-                                        Image(systemName: systemImage)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(playlist.displayName)
-                                            .lineLimit(1)
-                                            .foregroundStyle(.primary)
-                                        Text(playlist.countText)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer()
-                                }
-                                .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(updatingIDs.contains(playlist.id))
-                        }
-                    }
-                }
-
-                if let pagination, pagination.totalPages > 1 {
-                    Section {
-                        HStack {
-                            Button("上一页") {
-                                page = max(page - 1, 1)
-                            }
-                            .foregroundStyle(.primary)
-                            .disabled(page <= 1 || isLoading)
-
-                            Spacer()
-
-                            Text("\(page) / \(pagination.totalPages)")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-
-                            Spacer()
-
-                            Button("下一页") {
-                                page = min(page + 1, pagination.totalPages)
-                            }
-                            .foregroundStyle(.primary)
-                            .disabled(page >= pagination.totalPages || isLoading)
+        FormSheet(title: "添加到播放列表") {
+            Section("播放列表") {
+                if isLoading && playlists.isEmpty {
+                    ProgressView("加载播放列表...")
+                } else if playlists.isEmpty {
+                    Text(message ?? "暂无播放列表")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(playlists) { playlist in
+                        SelectionRow(
+                            playlist: playlist,
+                            isSelected: playlist.exist,
+                            style: .multiple,
+                            isLoading: updatingIDs.contains(playlist.id)
+                        ) {
+                            toggle(playlist)
                         }
                     }
                 }
             }
-            .navigationTitle("添加到播放列表")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("完成") {
-                        isMenuPresented = false
+
+            if let pagination, pagination.totalPages > 1 {
+                Section {
+                    HStack {
+                        Button("上一页") {
+                            page = max(page - 1, 1)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.primary)
+                        .disabled(page <= 1 || isLoading)
+
+                        Spacer()
+
+                        Text("\(page) / \(pagination.totalPages)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button("下一页") {
+                            page = min(page + 1, pagination.totalPages)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.primary)
+                        .disabled(page >= pagination.totalPages || isLoading)
                     }
                 }
             }
@@ -248,6 +195,42 @@ struct PlaylistActionButton: View {
         guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
         playlists[index].worksCount = max(playlists[index].worksCount + (exist ? 1 : -1), 0)
         playlists[index].exist = exist
+    }
+}
+
+extension SelectionRow {
+    init(
+        playlist: PlaylistSummary,
+        isSelected: Bool,
+        style: SelectionRowStyle,
+        isLoading: Bool = false,
+        action: @escaping () -> Void,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) {
+        self.init(
+            title: playlist.displayName,
+            subtitle: playlist.countText,
+            systemImage: playlist.systemImage,
+            isSelected: isSelected,
+            style: style,
+            isLoading: isLoading,
+            action: action,
+            accessory: accessory
+        )
+    }
+}
+
+extension SelectionRow where Accessory == EmptyView {
+    init(
+        playlist: PlaylistSummary,
+        isSelected: Bool,
+        style: SelectionRowStyle,
+        isLoading: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.init(playlist: playlist, isSelected: isSelected, style: style, isLoading: isLoading, action: action) {
+            EmptyView()
+        }
     }
 }
 

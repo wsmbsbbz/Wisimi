@@ -77,42 +77,16 @@ struct WorksFilterSheet: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(managedPlaylists) { playlist in
-                                HStack(spacing: 10) {
-                                    Button {
-                                        playlistID = playlist.id
-                                    } label: {
-                                        HStack(spacing: 10) {
-                                            if let systemImage = playlist.systemImage {
-                                                Image(systemName: systemImage)
-                                                    .foregroundStyle(.secondary)
-                                            }
-
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(playlist.displayName)
-                                                    .foregroundStyle(.primary)
-                                                    .lineLimit(1)
-                                                Text(playlist.countText)
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
-                                            }
-
-                                            Spacer()
-
-                                            if playlistID == playlist.id {
-                                                Image(systemName: "checkmark")
-                                                    .foregroundStyle(.primary)
-                                            }
-                                        }
-                                        .contentShape(.rect)
-                                    }
-                                    .buttonStyle(.plain)
-
+                                SelectionRow(playlist: playlist, isSelected: playlistID == playlist.id, style: .single) {
+                                    playlistID = playlist.id
+                                } accessory: {
                                     if !playlist.isSystemPreserved {
                                         Button {
                                             playlistActions = playlist
                                         } label: {
                                             Image(systemName: "pencil")
-                                                .frame(width: 34, height: 34)
+                                                .frame(width: 44, height: 44)
+                                                .contentShape(.rect)
                                         }
                                         .buttonStyle(.borderless)
                                         .foregroundStyle(.secondary)
@@ -157,6 +131,7 @@ struct WorksFilterSheet: View {
                 }
             }
             .navigationTitle("筛选")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("重置") {
@@ -323,53 +298,33 @@ private struct PlaylistEditorSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("名称", text: $name)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+        FormSheet(
+            title: editor.title,
+            submit: SheetSubmit(
+                title: editor.submitTitle,
+                isLoading: isSaving,
+                isDisabled: trimmedName.isEmpty || token == nil
+            ) {
+                Task { await save() }
+            },
+            errorMessage: message
+        ) {
+            Section {
+                TextField("名称", text: $name)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
 
-                    TextField("描述", text: $description, axis: .vertical)
-                        .lineLimit(3...6)
-                }
-
-                Section("隐私") {
-                    Picker("隐私", selection: $privacy) {
-                        ForEach(PlaylistPrivacy.allCases) { option in
-                            Text(option.title).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                if let message {
-                    Section {
-                        Text(message)
-                            .foregroundStyle(.red)
-                    }
-                }
+                TextField("描述", text: $description, axis: .vertical)
+                    .lineLimit(3...6)
             }
-            .navigationTitle(editor.title)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        dismiss()
-                    }
-                }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task { await save() }
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text(editor.submitTitle)
-                        }
+            Section("隐私") {
+                Picker("隐私", selection: $privacy) {
+                    ForEach(PlaylistPrivacy.allCases) { option in
+                        Text(option.title).tag(option)
                     }
-                    .disabled(isSaving || trimmedName.isEmpty || token == nil)
                 }
+                .pickerStyle(.segmented)
             }
         }
     }
