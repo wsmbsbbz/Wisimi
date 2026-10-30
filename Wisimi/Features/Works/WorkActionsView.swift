@@ -60,26 +60,7 @@ struct PlaylistActionButton: View {
     @Binding var isMenuPresented: Bool
     let onLoginRequired: () -> Void
 
-    @State private var playlists: [PlaylistSummary] = []
-    @State private var pagination: WorksPagination?
-    @State private var page = 1
-    @State private var isLoading = false
-    @State private var updatingIDs: Set<String> = []
-    @State private var message: String?
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            button
-
-            if let message {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-    }
-
-    private var button: some View {
         Button {
             guard token != nil else {
                 onLoginRequired()
@@ -92,109 +73,65 @@ struct PlaylistActionButton: View {
         .buttonStyle(.bordered)
         .tint(.blue)
         .sheet(isPresented: $isMenuPresented) {
-            menu
-                .presentationDetents([.medium, .large])
-                .task(id: page) {
-                    await loadPlaylists()
-                }
+            if let token {
+                PlaylistMembershipSheet(workID: workID, client: client, token: token)
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
+}
 
-    private var menu: some View {
-        FormSheet(title: "添加到播放列表") {
+/// 状态随弹层创建，每次打开都从第一页重新加载。
+private struct PlaylistMembershipSheet: View {
+    let token: String
+    @State private var state: PlaylistMembershipState
+
+    init(workID: Int, client: ASMRClient, token: String) {
+        self.token = token
+        _state = State(initialValue: PlaylistMembershipState(workID: workID, client: client))
+    }
+
+    var body: some View {
+        FormSheet(title: "添加到播放列表", errorMessage: state.errorMessage) {
             Section("播放列表") {
-                if isLoading && playlists.isEmpty {
-                    ProgressView("加载播放列表...")
-                } else if playlists.isEmpty {
-                    Text(message ?? "暂无播放列表")
-                        .foregroundStyle(.secondary)
+                if state.playlists.isEmpty {
+                    if state.errorMessage == nil {
+                        if state.pagination == nil {
+                            ProgressView("加载播放列表...")
+                        } else {
+                            Text("暂无播放列表")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 } else {
-                    ForEach(playlists) { playlist in
+                    ForEach(state.playlists) { playlist in
                         SelectionRow(
                             playlist: playlist,
                             isSelected: playlist.exist,
                             style: .multiple,
-                            isLoading: updatingIDs.contains(playlist.id)
+                            isLoading: state.updatingIDs.contains(playlist.id)
                         ) {
-                            toggle(playlist)
+                            Task { await state.toggle(playlist, token: token) }
                         }
                     }
                 }
             }
 
-            if let pagination, pagination.totalPages > 1 {
+            if let pagination = state.pagination, pagination.totalPages > 1 {
                 Section {
-                    HStack {
-                        Button("上一页") {
-                            page = max(page - 1, 1)
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.primary)
-                        .disabled(page <= 1 || isLoading)
-
-                        Spacer()
-
-                        Text("\(page) / \(pagination.totalPages)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        Button("下一页") {
-                            page = min(page + 1, pagination.totalPages)
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.primary)
-                        .disabled(page >= pagination.totalPages || isLoading)
+                    PaginationControls(
+                        currentPage: state.currentPage,
+                        totalPages: pagination.totalPages,
+                        isLoading: state.isLoading
+                    ) { page in
+                        Task { await state.load(page: page, token: token) }
                     }
                 }
             }
         }
-    }
-
-    private func loadPlaylists() async {
-        guard let token, !isLoading else { return }
-        isLoading = true
-        message = nil
-        do {
-            let response = try await client.fetchPlaylistStatus(workID: workID, page: page, token: token)
-            playlists = response.playlists
-            pagination = response.pagination
-        } catch is CancellationError {
-        } catch {
-            message = error.localizedDescription
+        .task {
+            await state.load(page: 1, token: token)
         }
-        isLoading = false
-    }
-
-    private func toggle(_ playlist: PlaylistSummary) {
-        guard let token, !updatingIDs.contains(playlist.id) else { return }
-        let newExist = !playlist.exist
-        updatePlaylist(playlist.id, exist: newExist)
-        updatingIDs.insert(playlist.id)
-        message = nil
-
-        Task {
-            do {
-                if newExist {
-                    try await client.addWorkToPlaylist(playlistID: playlist.id, workID: workID, token: token)
-                } else {
-                    try await client.removeWorkFromPlaylist(playlistID: playlist.id, workID: workID, token: token)
-                }
-            } catch is CancellationError {
-                updatePlaylist(playlist.id, exist: !newExist)
-            } catch {
-                updatePlaylist(playlist.id, exist: !newExist)
-                message = error.localizedDescription
-            }
-            updatingIDs.remove(playlist.id)
-        }
-    }
-
-    private func updatePlaylist(_ id: String, exist: Bool) {
-        guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
-        playlists[index].worksCount = max(playlists[index].worksCount + (exist ? 1 : -1), 0)
-        playlists[index].exist = exist
     }
 }
 
