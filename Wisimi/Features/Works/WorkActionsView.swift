@@ -1,13 +1,13 @@
 import SwiftUI
 
 struct ReviewActionButton: View {
-    let isMarked: Bool
     let currentStatus: ReviewStatus?
+    let isLoggedIn: Bool
     let isLoading: Bool
     @Binding var isMenuPresented: Bool
     let message: String?
-    let action: () -> Void
-    let onStatusSelected: (ReviewStatus) -> Void
+    let onLoginRequired: () -> Void
+    let onStatusSelected: (ReviewStatus?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -22,20 +22,25 @@ struct ReviewActionButton: View {
     }
 
     private var markButton: some View {
-        Button(action: action) {
+        Button {
+            guard isLoggedIn else {
+                onLoginRequired()
+                return
+            }
+            isMenuPresented = true
+        } label: {
             WorkActionLabel(
-                title: isMarked ? "删除标记" : "标记",
-                systemImage: isMarked ? "bookmark.slash" : "bookmark",
+                title: "标记",
+                systemImage: currentStatus == nil ? "bookmark" : "bookmark.fill",
                 detail: currentStatus?.title,
                 isLoading: isLoading
             )
         }
         .buttonStyle(.bordered)
-        .tint(isMarked ? .red : .accentColor)
         .disabled(isLoading)
         .sheet(isPresented: $isMenuPresented) {
             markMenu
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
         }
     }
 
@@ -44,12 +49,24 @@ struct ReviewActionButton: View {
             Section("状态") {
                 ForEach(ReviewStatus.allCases) { status in
                     SelectionRow(title: status.title, isSelected: currentStatus == status, style: .single) {
-                        isMenuPresented = false
-                        onStatusSelected(status)
+                        select(status)
+                    }
+                }
+            }
+
+            if currentStatus != nil {
+                Section {
+                    Button("删除标记", role: .destructive) {
+                        select(nil)
                     }
                 }
             }
         }
+    }
+
+    private func select(_ status: ReviewStatus?) {
+        isMenuPresented = false
+        if status != currentStatus { onStatusSelected(status) }
     }
 }
 
