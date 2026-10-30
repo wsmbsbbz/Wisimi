@@ -518,6 +518,8 @@ private struct WorksSearchHeader: View {
     }
 }
 
+let miniPlayerAvoidanceHeight: CGFloat = 70
+
 private struct MiniPlayerBar: View {
     @ObservedObject var player: WorkAudioPlayer
     let openPlayer: () -> Void

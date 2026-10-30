@@ -11,7 +11,6 @@ struct WorksFilterSheet: View {
     @State private var playlistEditor: PlaylistEditor?
     @State private var playlistActions: PlaylistSummary?
     @State private var playlistToDelete: PlaylistSummary?
-    @State private var isDeleting = false
     @State private var mutationMessage: String?
     let token: String?
     let onApply: (WorksFilter) -> Void
@@ -45,89 +44,19 @@ struct WorksFilterSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if context == .favorites {
-                    Section("状态") {
-                        Picker("", selection: $reviewDraft.status) {
-                            ForEach(ReviewStatus.allCases) { status in
-                                Text(status.title).tag(status)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                        .labelsHidden()
-                    }
-
-                    Section("排序") {
-                        Picker("字段", selection: $reviewDraft.order) {
-                            ForEach(ReviewOrder.allCases) { order in
-                                Text(order.title).tag(order)
-                            }
-                        }
-
-                        Picker("方向", selection: $reviewDraft.sort) {
-                            ForEach(ReviewSort.allCases) { sort in
-                                Text(sort.title(for: reviewDraft.order)).tag(sort)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                } else if context == .playlists {
-                    Section("播放列表") {
-                        if managedPlaylists.isEmpty {
-                            Text("暂无播放列表")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(managedPlaylists) { playlist in
-                                SelectionRow(playlist: playlist, isSelected: playlistID == playlist.id, style: .single) {
-                                    playlistID = playlist.id
-                                } accessory: {
-                                    if !playlist.isSystemPreserved {
-                                        Button {
-                                            playlistActions = playlist
-                                        } label: {
-                                            Image(systemName: "pencil")
-                                                .frame(width: 44, height: 44)
-                                                .contentShape(.rect)
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .foregroundStyle(.secondary)
-                                        .accessibilityLabel("编辑\(playlist.displayName)")
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Section("管理") {
-                        Button {
-                            playlistEditor = .create
-                        } label: {
-                            Label("新建播放列表", systemImage: "plus")
-                        }
-
-                        if let mutationMessage {
-                            Text(mutationMessage)
-                                .foregroundStyle(.red)
-                        }
-                    }
-                } else {
-                    Section {
-                        Toggle("有字幕", isOn: $draft.hasSubtitle)
-                    }
-
-                    Section("排序") {
-                        Picker("字段", selection: $draft.order) {
-                            ForEach(WorksOrder.allCases) { order in
-                                Text(order.title).tag(order)
-                            }
-                        }
-
-                        Picker("方向", selection: $draft.sort) {
-                            ForEach(WorksSort.allCases) { sort in
-                                Text(sort.title).tag(sort)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
+                switch context {
+                case .favorites:
+                    ReviewFilterSections(filter: $reviewDraft)
+                case .playlists:
+                    PlaylistFilterSections(
+                        playlists: managedPlaylists,
+                        selectedID: $playlistID,
+                        editor: $playlistEditor,
+                        actions: $playlistActions,
+                        message: mutationMessage
+                    )
+                case .works:
+                    WorksFilterSections(filter: $draft)
                 }
             }
             .navigationTitle("筛选")
@@ -135,25 +64,19 @@ struct WorksFilterSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("重置") {
-                        if context == .favorites {
-                            reviewDraft = .default
-                        } else if context == .playlists {
-                            playlistID = managedPlaylists.first?.id
-                        } else {
-                            draft = .default
+                        switch context {
+                        case .favorites: reviewDraft = .default
+                        case .playlists: playlistID = managedPlaylists.first?.id
+                        case .works: draft = .default
                         }
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("应用") {
-                        if context == .favorites {
-                            onApplyReviewFilter(reviewDraft)
-                        } else if context == .playlists {
-                            if let playlistID {
-                                onApplyPlaylist(playlistID)
-                            }
-                        } else {
-                            onApply(draft)
+                        switch context {
+                        case .favorites: onApplyReviewFilter(reviewDraft)
+                        case .playlists: if let playlistID { onApplyPlaylist(playlistID) }
+                        case .works: onApply(draft)
                         }
                         dismiss()
                     }
@@ -210,7 +133,6 @@ struct WorksFilterSheet: View {
             return
         }
 
-        isDeleting = true
         mutationMessage = nil
         do {
             let wasSelected = catalog.selectedID == playlist.id
@@ -221,141 +143,110 @@ struct WorksFilterSheet: View {
         } catch {
             mutationMessage = error.localizedDescription
         }
-        isDeleting = false
     }
 }
 
-private enum PlaylistEditor: Identifiable {
-    case create
-    case edit(PlaylistSummary)
-
-    var id: String {
-        switch self {
-        case .create: "create"
-        case .edit(let playlist): "edit-\(playlist.id)"
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .create: "新建播放列表"
-        case .edit: "编辑播放列表"
-        }
-    }
-
-    var submitTitle: String {
-        switch self {
-        case .create: "创建"
-        case .edit: "保存"
-        }
-    }
-}
-
-private enum PlaylistPrivacy: Int, CaseIterable, Identifiable {
-    case `private` = 0
-    case unlisted = 1
-    case `public` = 2
-
-    var id: Int { rawValue }
-
-    var title: String {
-        switch self {
-        case .private: "私享"
-        case .unlisted: "不公开"
-        case .public: "公开"
-        }
-    }
-}
-
-private struct PlaylistEditorSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let editor: PlaylistEditor
-    let catalog: PlaylistCatalog
-    let token: String?
-    let onSaved: (PlaylistSummary) -> Void
-    @State private var name: String
-    @State private var description: String
-    @State private var privacy: PlaylistPrivacy
-    @State private var isSaving = false
-    @State private var message: String?
-
-    init(editor: PlaylistEditor, catalog: PlaylistCatalog, token: String?, onSaved: @escaping (PlaylistSummary) -> Void) {
-        self.editor = editor
-        self.catalog = catalog
-        self.token = token
-        self.onSaved = onSaved
-
-        switch editor {
-        case .create:
-            _name = State(initialValue: "")
-            _description = State(initialValue: "")
-            _privacy = State(initialValue: .private)
-        case .edit(let playlist):
-            _name = State(initialValue: playlist.displayName)
-            _description = State(initialValue: playlist.description)
-            _privacy = State(initialValue: PlaylistPrivacy(rawValue: playlist.privacy) ?? .private)
-        }
-    }
+private struct ReviewFilterSections: View {
+    @Binding var filter: ReviewFilter
 
     var body: some View {
-        FormSheet(
-            title: editor.title,
-            submit: SheetSubmit(
-                title: editor.submitTitle,
-                isLoading: isSaving,
-                isDisabled: trimmedName.isEmpty || token == nil
-            ) {
-                Task { await save() }
-            },
-            errorMessage: message
-        ) {
-            Section {
-                TextField("名称", text: $name)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-
-                TextField("描述", text: $description, axis: .vertical)
-                    .lineLimit(3...6)
-            }
-
-            Section("隐私") {
-                Picker("隐私", selection: $privacy) {
-                    ForEach(PlaylistPrivacy.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
+        Section("状态") {
+            Picker("", selection: $filter.status) {
+                ForEach(ReviewStatus.allCases) { status in
+                    Text(status.title).tag(status)
                 }
-                .pickerStyle(.segmented)
             }
-        }
-    }
-
-    private var trimmedName: String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func save() async {
-        guard let token else {
-            message = "请先登录"
-            return
+            .pickerStyle(.inline)
+            .labelsHidden()
         }
 
-        isSaving = true
-        message = nil
-        do {
-            let id: String?
-            switch editor {
-            case .create: id = nil
-            case .edit(let playlist): id = playlist.id
+        Section("排序") {
+            Picker("字段", selection: $filter.order) {
+                ForEach(ReviewOrder.allCases) { order in
+                    Text(order.title).tag(order)
+                }
             }
-            let playlist = try await catalog.save(id: id, name: trimmedName, privacy: privacy.rawValue,
-                                                   description: description, token: token)
-            onSaved(playlist)
-            dismiss()
-        } catch {
-            message = error.localizedDescription
+
+            Picker("方向", selection: $filter.sort) {
+                ForEach(ReviewSort.allCases) { sort in
+                    Text(sort.title(for: filter.order)).tag(sort)
+                }
+            }
+            .pickerStyle(.segmented)
         }
-        isSaving = false
     }
 }
 
-let miniPlayerAvoidanceHeight: CGFloat = 70
+private struct PlaylistFilterSections: View {
+    let playlists: [PlaylistSummary]
+    @Binding var selectedID: String?
+    @Binding var editor: PlaylistEditor?
+    @Binding var actions: PlaylistSummary?
+    let message: String?
+
+    var body: some View {
+        Section("播放列表") {
+            if playlists.isEmpty {
+                Text("暂无播放列表")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(playlists) { playlist in
+                    SelectionRow(playlist: playlist, isSelected: selectedID == playlist.id, style: .single) {
+                        selectedID = playlist.id
+                    } accessory: {
+                        if !playlist.isSystemPreserved {
+                            Button {
+                                actions = playlist
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(.rect)
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("编辑\(playlist.displayName)")
+                        }
+                    }
+                }
+            }
+        }
+
+        Section("管理") {
+            Button {
+                editor = .create
+            } label: {
+                Label("新建播放列表", systemImage: "plus")
+            }
+
+            if let message {
+                Text(message)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+private struct WorksFilterSections: View {
+    @Binding var filter: WorksFilter
+
+    var body: some View {
+        Section {
+            Toggle("有字幕", isOn: $filter.hasSubtitle)
+        }
+
+        Section("排序") {
+            Picker("字段", selection: $filter.order) {
+                ForEach(WorksOrder.allCases) { order in
+                    Text(order.title).tag(order)
+                }
+            }
+
+            Picker("方向", selection: $filter.sort) {
+                ForEach(WorksSort.allCases) { sort in
+                    Text(sort.title).tag(sort)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+}
