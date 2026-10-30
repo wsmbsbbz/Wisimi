@@ -28,7 +28,7 @@ struct FormSheet<Content: View>: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(.bar)
+                            .background(.regularMaterial)
                     }
                 }
                 .toolbar {

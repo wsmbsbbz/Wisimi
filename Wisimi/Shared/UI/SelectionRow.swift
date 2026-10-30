@@ -42,6 +42,7 @@ struct SelectionRow<Accessory: View>: View {
                 }
                 .contentShape(.rect)
             }
+            .tint(.primary)
             .disabled(isLoading)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
@@ -59,12 +60,12 @@ struct SelectionRow<Accessory: View>: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .fontWeight(.semibold)
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(Color.accentColor)
                 }
             case .multiple:
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(Color.accentColor)
                 } else {
                     Image(systemName: "circle")
                         .foregroundStyle(.secondary)
