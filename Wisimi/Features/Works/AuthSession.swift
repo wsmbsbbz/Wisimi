@@ -31,7 +31,7 @@ final class AuthSession: ObservableObject {
             try store.save(JSONEncoder().encode(auth))
             self.auth = auth
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.userFacingMessage
         }
     }
 
