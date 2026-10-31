@@ -9,8 +9,6 @@ struct WorksFilterSheet: View {
     let catalog: PlaylistCatalog
     private var managedPlaylists: [PlaylistSummary] { catalog.playlists }
     @State private var playlistEditor: PlaylistEditor?
-    @State private var playlistActions: PlaylistSummary?
-    @State private var playlistToDelete: PlaylistSummary?
     @State private var mutationMessage: String?
     let token: String?
     let onApply: (WorksFilter) -> Void
@@ -52,8 +50,10 @@ struct WorksFilterSheet: View {
                         playlists: managedPlaylists,
                         selectedID: $playlistID,
                         editor: $playlistEditor,
-                        actions: $playlistActions,
-                        message: mutationMessage
+                        message: mutationMessage,
+                        onDelete: { playlist in
+                            Task { await deletePlaylist(playlist) }
+                        }
                     )
                 case .works:
                     WorksFilterSections(filter: $draft)
@@ -87,34 +87,6 @@ struct WorksFilterSheet: View {
                     apply(playlist, from: editor)
                 }
             }
-            .confirmationDialog("管理播放列表", item: $playlistActions) { playlist in
-                Button("编辑") {
-                    playlistEditor = .edit(playlist)
-                }
-                Button("删除", role: .destructive) {
-                    playlistToDelete = playlist
-                }
-            }
-            .confirmationDialog("删除播放列表？", isPresented: deleteConfirmation) {
-                Button("删除", role: .destructive) {
-                    if let playlistToDelete {
-                        Task { await deletePlaylist(playlistToDelete) }
-                    }
-                }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("删除后无法恢复。")
-            }
-        }
-    }
-
-    private var deleteConfirmation: Binding<Bool> {
-        Binding {
-            playlistToDelete != nil
-        } set: { isPresented in
-            if !isPresented {
-                playlistToDelete = nil
-            }
         }
     }
 
@@ -139,7 +111,6 @@ struct WorksFilterSheet: View {
             try await catalog.delete(id: playlist.id, token: token)
             if playlistID == playlist.id { playlistID = catalog.playlists.first?.id }
             if wasSelected { onCatalogChanged() }
-            playlistToDelete = nil
         } catch {
             mutationMessage = error.localizedDescription
         }
@@ -181,8 +152,8 @@ private struct PlaylistFilterSections: View {
     let playlists: [PlaylistSummary]
     @Binding var selectedID: String?
     @Binding var editor: PlaylistEditor?
-    @Binding var actions: PlaylistSummary?
     let message: String?
+    let onDelete: (PlaylistSummary) -> Void
 
     var body: some View {
         Section("播放列表") {
@@ -195,16 +166,11 @@ private struct PlaylistFilterSections: View {
                         selectedID = playlist.id
                     } accessory: {
                         if !playlist.isSystemPreserved {
-                            Button {
-                                actions = playlist
-                            } label: {
-                                Image(systemName: "pencil")
-                                    .frame(width: 44, height: 44)
-                                    .contentShape(.rect)
-                            }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("编辑\(playlist.displayName)")
+                            PlaylistActionsButton(
+                                playlistName: playlist.displayName,
+                                onEdit: { editor = .edit(playlist) },
+                                onDelete: { onDelete(playlist) }
+                            )
                         }
                     }
                 }
@@ -222,6 +188,36 @@ private struct PlaylistFilterSections: View {
                 Text(message)
                     .foregroundStyle(.red)
             }
+        }
+    }
+}
+
+/// 用 Menu 而不是 confirmationDialog：后者在弹层内总是锚定到弹层顶部，Menu 才从铅笔位置弹出。
+private struct PlaylistActionsButton: View {
+    let playlistName: String
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    @State private var isDeleteConfirmationPresented = false
+
+    var body: some View {
+        Menu {
+            Button("编辑", action: onEdit)
+            Button("删除", role: .destructive) {
+                isDeleteConfirmationPresented = true
+            }
+        } label: {
+            Image(systemName: "pencil")
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("编辑\(playlistName)")
+        .alert("删除播放列表？", isPresented: $isDeleteConfirmationPresented) {
+            Button("删除", role: .destructive, action: onDelete)
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("删除后无法恢复。")
         }
     }
 }
