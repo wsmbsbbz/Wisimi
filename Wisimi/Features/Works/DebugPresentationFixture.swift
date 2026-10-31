@@ -68,9 +68,19 @@ private enum DebugSheetFixture {
 }
 
 /// 两页播放列表；添加成功，移除固定失败，用于验收乐观更新回滚和弹层内错误。
+/// 删除“睡前”成功；删除其他列表返回无法解码的数据，用于验收错误文案。
 private final class DebugSheetProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    private var isDeletingSleepPlaylist: Bool {
+        guard let stream = request.httpBodyStream else { return false }
+        stream.open()
+        defer { stream.close() }
+        var buffer = [UInt8](repeating: 0, count: 256)
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        return count > 0 && String(decoding: buffer[..<count], as: UTF8.self).contains("sleep")
+    }
 
     override func startLoading() {
         let url = request.url!
@@ -81,6 +91,8 @@ private final class DebugSheetProtocol: URLProtocol, @unchecked Sendable {
         let json: String
         if url.path.hasSuffix("add-works-to-playlist") {
             json = #"{"id":"debug","rowCount":1}"#
+        } else if url.path.hasSuffix("delete-playlist") {
+            json = isDeletingSleepPlaylist ? #"{"id":"sleep"}"# : "{}"
         } else {
             let page = url.query?.contains("page=2") == true ? 2 : 1
             let rows = page == 1

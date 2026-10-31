@@ -2,6 +2,7 @@ import Foundation
 
 extension Error {
     var userFacingMessage: String {
+        if self is DecodingError { return "服务器返回的数据无法识别，请稍后重试" }
         guard let error = self as? URLError else { return localizedDescription }
         switch error.code {
         case .notConnectedToInternet: return "网络未连接，请检查网络后重试"

@@ -127,7 +127,7 @@ struct PlaylistEditorSheet: View {
             onSaved(playlist)
             dismiss()
         } catch {
-            message = error.localizedDescription
+            message = error.userFacingMessage
         }
         isSaving = false
     }

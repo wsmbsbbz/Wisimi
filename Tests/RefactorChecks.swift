@@ -234,6 +234,8 @@ struct RefactorChecks {
         await state.toggle(state.playlists[0], token: "test")
         assert(state.playlists[0].exist && state.playlists[0].worksCount == 3)
         assert(state.errorMessage == URLError(.notConnectedToInternet).userFacingMessage)
+        let decodingFailure = DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bad"))
+        assert(decodingFailure.userFacingMessage == "服务器返回的数据无法识别，请稍后重试")
         HTTPStub.respond = { _ in (200, mutationJSON) }
         await state.toggle(state.playlists[0], token: "test")
         assert(!state.playlists[0].exist && state.errorMessage == nil)

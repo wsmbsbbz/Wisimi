@@ -7,7 +7,24 @@ struct SheetSubmit {
     let action: () -> Void
 }
 
-/// 弹层外壳：统一行内标题和工具栏；错误固定在底部，长列表滚动时也可见。
+extension View {
+    /// 错误固定在弹层底部，长列表滚动时也可见。
+    func sheetErrorBar(_ message: String?) -> some View {
+        safeAreaInset(edge: .bottom) {
+            if let message {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial)
+            }
+        }
+    }
+}
+
+/// 弹层外壳：统一行内标题、工具栏和底部错误。
 struct FormSheet<Content: View>: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
@@ -20,17 +37,7 @@ struct FormSheet<Content: View>: View {
             Form(content: content)
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
-                .safeAreaInset(edge: .bottom) {
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(.regularMaterial)
-                    }
-                }
+                .sheetErrorBar(errorMessage)
                 .toolbar {
                     if let submit {
                         ToolbarItem(placement: .cancellationAction) {

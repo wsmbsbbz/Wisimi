@@ -50,7 +50,6 @@ struct WorksFilterSheet: View {
                         playlists: managedPlaylists,
                         selectedID: $playlistID,
                         editor: $playlistEditor,
-                        message: mutationMessage,
                         onDelete: { playlist in
                             Task { await deletePlaylist(playlist) }
                         }
@@ -59,6 +58,7 @@ struct WorksFilterSheet: View {
                     WorksFilterSections(filter: $draft)
                 }
             }
+            .sheetErrorBar(mutationMessage)
             .navigationTitle("筛选")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -112,7 +112,7 @@ struct WorksFilterSheet: View {
             if playlistID == playlist.id { playlistID = catalog.playlists.first?.id }
             if wasSelected { onCatalogChanged() }
         } catch {
-            mutationMessage = error.localizedDescription
+            mutationMessage = error.userFacingMessage
         }
     }
 }
@@ -152,7 +152,6 @@ private struct PlaylistFilterSections: View {
     let playlists: [PlaylistSummary]
     @Binding var selectedID: String?
     @Binding var editor: PlaylistEditor?
-    let message: String?
     let onDelete: (PlaylistSummary) -> Void
 
     var body: some View {
@@ -182,11 +181,6 @@ private struct PlaylistFilterSections: View {
                 editor = .create
             } label: {
                 Label("新建播放列表", systemImage: "plus")
-            }
-
-            if let message {
-                Text(message)
-                    .foregroundStyle(.red)
             }
         }
     }
