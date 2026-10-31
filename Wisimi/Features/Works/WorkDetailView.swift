@@ -140,26 +140,19 @@ struct WorkDetailView: View {
         await pageState.load(workID: workID, token: auth.token, force: force)
     }
 
-    private func toggleMark() {
-        guard let work = pageState.work else { return }
-        guard let token = auth.token else { onLoginRequired(); return }
-        guard work.progress != nil else { isMarkMenuPresented.toggle(); return }
-        Task { await pageState.mark(nil, token: token) }
-    }
-
-    private func mark(_ status: ReviewStatus) {
+    private func mark(_ status: ReviewStatus?) {
         guard let token = auth.token else { return }
         Task { await pageState.mark(status, token: token) }
     }
 
     private func reviewAction(for work: WorkDetail) -> some View {
         ReviewActionButton(
-            isMarked: work.progress != nil,
             currentStatus: work.progress,
+            isLoggedIn: auth.token != nil,
             isLoading: pageState.isUpdatingMark,
             isMenuPresented: $isMarkMenuPresented,
             message: pageState.markMessage,
-            action: toggleMark,
+            onLoginRequired: onLoginRequired,
             onStatusSelected: mark
         )
     }

@@ -83,6 +83,7 @@ struct RefactorChecks {
         try await browserChecks()
         try await detailChecks()
         try await similarWorksChecks()
+        try await playlistMembershipChecks()
         try await raceChecks()
         try await settingsChecks()
         try keychainChecks()
@@ -212,6 +213,79 @@ struct RefactorChecks {
     static let worksJSON = #"{"works":[{"id":1,"title":"晚安","name":"Wisimi","has_subtitle":true,"tags":[],"vas":[]}],"pagination":{"currentPage":1,"pageSize":12,"totalCount":24}}"#
     static let playlistJSON = #"{"id":"p1","name":"睡前","privacy":0,"description":"","worksCount":0}"#
     static let playlistsJSON = #"{"playlists":[{"id":"p1","name":"睡前","privacy":0,"description":"","worksCount":0}],"pagination":{"currentPage":1,"pageSize":20,"totalCount":1}}"#
+
+    static let mutationJSON = #"{"id":"p1","rowCount":1}"#
+
+    static func membershipJSON(page: Int, exist: Bool = false, count: Int = 2) -> String {
+        #"{"playlists":[{"id":"p\#(page)","name":"睡前","privacy":0,"description":"","works_count":\#(count),"exist":\#(exist)}],"pagination":{"currentPage":\#(page),"pageSize":12,"totalCount":24}}"#
+    }
+
+    @MainActor static func playlistMembershipChecks() async throws {
+        let state = PlaylistMembershipState(workID: 1, client: client())
+        HTTPStub.respond = { _ in (200, membershipJSON(page: 1)) }
+        await state.load(page: 1, token: "test")
+        assert(state.playlists.first?.id == "p1" && state.pagination?.totalPages == 2 && !state.isLoading)
+
+        // 乐观更新成功后保留，失败时回滚并给出错误。
+        HTTPStub.respond = { _ in (200, mutationJSON) }
+        await state.toggle(state.playlists[0], token: "test")
+        assert(state.playlists[0].exist && state.playlists[0].worksCount == 3 && state.updatingIDs.isEmpty)
+        HTTPStub.respond = { _ in throw URLError(.notConnectedToInternet) }
+        await state.toggle(state.playlists[0], token: "test")
+        assert(state.playlists[0].exist && state.playlists[0].worksCount == 3)
+        assert(state.errorMessage == URLError(.notConnectedToInternet).userFacingMessage)
+        let decodingFailure = DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bad"))
+        assert(decodingFailure.userFacingMessage == "服务器返回的数据无法识别，请稍后重试")
+        HTTPStub.respond = { _ in (200, mutationJSON) }
+        await state.toggle(state.playlists[0], token: "test")
+        assert(!state.playlists[0].exist && state.errorMessage == nil)
+
+        // 加载失败保留已有内容和页码。
+        HTTPStub.respond = { _ in throw URLError(.timedOut) }
+        await state.load(page: 2, token: "test")
+        assert(state.errorMessage != nil && state.currentPage == 1 && state.playlists.first?.id == "p1" && !state.isLoading)
+
+        // 关闭弹层取消请求时不显示错误，也不残留加载状态。
+        let gate = RequestGate()
+        HTTPStub.hold = { gate.hold($0) }
+        let cancelled = PlaylistMembershipState(workID: 1, client: client())
+        let load = Task { await cancelled.load(page: 1, token: "test") }
+        try await waitUntil { gate.count > 0 }
+        load.cancel()
+        await load.value
+        assert(cancelled.errorMessage == nil && !cancelled.isLoading && cancelled.playlists.isEmpty)
+        gate.finish { _ in "" }
+
+        // 更新的请求不被进行中的请求阻塞，过期响应不会覆盖结果。
+        let racing = PlaylistMembershipState(workID: 1, client: client())
+        let first = Task { await racing.load(page: 1, token: "test") }
+        try await waitUntil { gate.count == 1 }
+        let second = Task { await racing.load(page: 2, token: "test") }
+        try await waitUntil { gate.count == 2 }
+        gate.finish { request in
+            membershipJSON(page: request.url!.query?.contains("page=2") == true ? 2 : 1)
+        }
+        await first.value
+        await second.value
+        assert(racing.currentPage == 2 && racing.playlists.first?.id == "p2" && !racing.isLoading)
+        HTTPStub.hold = nil
+
+        // 同一播放列表更新期间不重复提交。
+        var mutations = 0
+        let busy = PlaylistMembershipState(workID: 1, client: client())
+        HTTPStub.respond = { _ in (200, membershipJSON(page: 1)) }
+        await busy.load(page: 1, token: "test")
+        HTTPStub.hold = { gate.hold($0) }
+        let playlist = busy.playlists[0]
+        let toggling = Task { await busy.toggle(playlist, token: "test") }
+        try await waitUntil { gate.count == 1 }
+        await busy.toggle(playlist, token: "test")
+        mutations = gate.count
+        gate.finish { _ in mutationJSON }
+        await toggling.value
+        assert(mutations == 1 && busy.playlists[0].exist)
+        HTTPStub.hold = nil
+    }
 
     @MainActor static func browserChecks() async throws {
         WorksFilterContextSelfCheck.run()

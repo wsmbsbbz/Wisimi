@@ -1,13 +1,13 @@
 import SwiftUI
 
 struct ReviewActionButton: View {
-    let isMarked: Bool
     let currentStatus: ReviewStatus?
+    let isLoggedIn: Bool
     let isLoading: Bool
     @Binding var isMenuPresented: Bool
     let message: String?
-    let action: () -> Void
-    let onStatusSelected: (ReviewStatus) -> Void
+    let onLoginRequired: () -> Void
+    let onStatusSelected: (ReviewStatus?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -22,55 +22,51 @@ struct ReviewActionButton: View {
     }
 
     private var markButton: some View {
-        Button(action: action) {
+        Button {
+            guard isLoggedIn else {
+                onLoginRequired()
+                return
+            }
+            isMenuPresented = true
+        } label: {
             WorkActionLabel(
-                title: isMarked ? "删除标记" : "标记",
-                systemImage: isMarked ? "bookmark.slash" : "bookmark",
+                title: "标记",
+                systemImage: currentStatus == nil ? "bookmark" : "bookmark.fill",
                 detail: currentStatus?.title,
                 isLoading: isLoading
             )
         }
         .buttonStyle(.bordered)
-        .tint(isMarked ? .red : .accentColor)
         .disabled(isLoading)
         .sheet(isPresented: $isMenuPresented) {
             markMenu
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
         }
     }
 
     private var markMenu: some View {
-        NavigationStack {
-            Form {
-                Section("状态") {
-                    ForEach(ReviewStatus.allCases) { status in
-                        Button {
-                            isMenuPresented = false
-                            onStatusSelected(status)
-                        } label: {
-                            HStack {
-                                Text(status.title)
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                if currentStatus == status {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
+        FormSheet(title: "标记") {
+            Section("状态") {
+                ForEach(ReviewStatus.allCases) { status in
+                    SelectionRow(title: status.title, isSelected: currentStatus == status, style: .single) {
+                        select(status)
                     }
                 }
             }
-            .navigationTitle("标记")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("完成") {
-                        isMenuPresented = false
+
+            if currentStatus != nil {
+                Section {
+                    Button("删除标记", role: .destructive) {
+                        select(nil)
                     }
                 }
             }
         }
+    }
+
+    private func select(_ status: ReviewStatus?) {
+        isMenuPresented = false
+        if status != currentStatus { onStatusSelected(status) }
     }
 }
 
@@ -81,26 +77,7 @@ struct PlaylistActionButton: View {
     @Binding var isMenuPresented: Bool
     let onLoginRequired: () -> Void
 
-    @State private var playlists: [PlaylistSummary] = []
-    @State private var pagination: WorksPagination?
-    @State private var page = 1
-    @State private var isLoading = false
-    @State private var updatingIDs: Set<String> = []
-    @State private var message: String?
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            button
-
-            if let message {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-    }
-
-    private var button: some View {
         Button {
             guard token != nil else {
                 onLoginRequired()
@@ -113,141 +90,101 @@ struct PlaylistActionButton: View {
         .buttonStyle(.bordered)
         .tint(.blue)
         .sheet(isPresented: $isMenuPresented) {
-            menu
-                .presentationDetents([.medium, .large])
-                .task(id: page) {
-                    await loadPlaylists()
-                }
+            if let token {
+                PlaylistMembershipSheet(workID: workID, client: client, token: token)
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
+}
 
-    private var menu: some View {
-        NavigationStack {
-            Form {
-                Section("播放列表") {
-                    if isLoading && playlists.isEmpty {
-                        ProgressView("加载播放列表...")
-                    } else if playlists.isEmpty {
-                        Text(message ?? "暂无播放列表")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(playlists) { playlist in
-                            Button {
-                                toggle(playlist)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    if updatingIDs.contains(playlist.id) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    } else {
-                                        Image(systemName: playlist.exist ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(playlist.exist ? Color.primary : Color.secondary)
-                                    }
+/// 状态随弹层创建，每次打开都从第一页重新加载。
+private struct PlaylistMembershipSheet: View {
+    let token: String
+    @State private var state: PlaylistMembershipState
 
-                                    if let systemImage = playlist.systemImage {
-                                        Image(systemName: systemImage)
-                                            .foregroundStyle(.secondary)
-                                    }
+    init(workID: Int, client: ASMRClient, token: String) {
+        self.token = token
+        _state = State(initialValue: PlaylistMembershipState(workID: workID, client: client))
+    }
 
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(playlist.displayName)
-                                            .lineLimit(1)
-                                            .foregroundStyle(.primary)
-                                        Text(playlist.countText)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer()
-                                }
-                                .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(updatingIDs.contains(playlist.id))
-                        }
-                    }
-                }
-
-                if let pagination, pagination.totalPages > 1 {
-                    Section {
-                        HStack {
-                            Button("上一页") {
-                                page = max(page - 1, 1)
-                            }
-                            .foregroundStyle(.primary)
-                            .disabled(page <= 1 || isLoading)
-
-                            Spacer()
-
-                            Text("\(page) / \(pagination.totalPages)")
-                                .font(.caption.monospacedDigit())
+    var body: some View {
+        FormSheet(title: "添加到播放列表", errorMessage: state.errorMessage) {
+            Section("播放列表") {
+                if state.playlists.isEmpty {
+                    if state.errorMessage == nil {
+                        if state.pagination == nil {
+                            ProgressView("加载播放列表...")
+                        } else {
+                            Text("暂无播放列表")
                                 .foregroundStyle(.secondary)
-
-                            Spacer()
-
-                            Button("下一页") {
-                                page = min(page + 1, pagination.totalPages)
-                            }
-                            .foregroundStyle(.primary)
-                            .disabled(page >= pagination.totalPages || isLoading)
+                        }
+                    }
+                } else {
+                    ForEach(state.playlists) { playlist in
+                        SelectionRow(
+                            playlist: playlist,
+                            isSelected: playlist.exist,
+                            style: .multiple,
+                            isLoading: state.updatingIDs.contains(playlist.id)
+                        ) {
+                            Task { await state.toggle(playlist, token: token) }
                         }
                     }
                 }
             }
-            .navigationTitle("添加到播放列表")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("完成") {
-                        isMenuPresented = false
+
+            if let pagination = state.pagination, pagination.totalPages > 1 {
+                Section {
+                    PaginationControls(
+                        currentPage: state.currentPage,
+                        totalPages: pagination.totalPages,
+                        isLoading: state.isLoading
+                    ) { page in
+                        Task { await state.load(page: page, token: token) }
                     }
                 }
             }
         }
-    }
-
-    private func loadPlaylists() async {
-        guard let token, !isLoading else { return }
-        isLoading = true
-        message = nil
-        do {
-            let response = try await client.fetchPlaylistStatus(workID: workID, page: page, token: token)
-            playlists = response.playlists
-            pagination = response.pagination
-        } catch is CancellationError {
-        } catch {
-            message = error.localizedDescription
-        }
-        isLoading = false
-    }
-
-    private func toggle(_ playlist: PlaylistSummary) {
-        guard let token, !updatingIDs.contains(playlist.id) else { return }
-        let newExist = !playlist.exist
-        updatePlaylist(playlist.id, exist: newExist)
-        updatingIDs.insert(playlist.id)
-        message = nil
-
-        Task {
-            do {
-                if newExist {
-                    try await client.addWorkToPlaylist(playlistID: playlist.id, workID: workID, token: token)
-                } else {
-                    try await client.removeWorkFromPlaylist(playlistID: playlist.id, workID: workID, token: token)
-                }
-            } catch is CancellationError {
-                updatePlaylist(playlist.id, exist: !newExist)
-            } catch {
-                updatePlaylist(playlist.id, exist: !newExist)
-                message = error.localizedDescription
-            }
-            updatingIDs.remove(playlist.id)
+        .task {
+            await state.load(page: 1, token: token)
         }
     }
+}
 
-    private func updatePlaylist(_ id: String, exist: Bool) {
-        guard let index = playlists.firstIndex(where: { $0.id == id }) else { return }
-        playlists[index].worksCount = max(playlists[index].worksCount + (exist ? 1 : -1), 0)
-        playlists[index].exist = exist
+extension SelectionRow {
+    init(
+        playlist: PlaylistSummary,
+        isSelected: Bool,
+        style: SelectionRowStyle,
+        isLoading: Bool = false,
+        action: @escaping () -> Void,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) {
+        self.init(
+            title: playlist.displayName,
+            subtitle: playlist.countText,
+            systemImage: playlist.systemImage,
+            isSelected: isSelected,
+            style: style,
+            isLoading: isLoading,
+            action: action,
+            accessory: accessory
+        )
+    }
+}
+
+extension SelectionRow where Accessory == EmptyView {
+    init(
+        playlist: PlaylistSummary,
+        isSelected: Bool,
+        style: SelectionRowStyle,
+        isLoading: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.init(playlist: playlist, isSelected: isSelected, style: style, isLoading: isLoading, action: action) {
+            EmptyView()
+        }
     }
 }
 

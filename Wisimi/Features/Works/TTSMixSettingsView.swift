@@ -218,10 +218,10 @@ private struct OpenRouterCredentialSummarySection: View {
         Section {
             NavigationLink(value: TTSMixSettingsRoute.openRouterCredentials) {
                 HStack(spacing: 12) {
-                    Label("OpenRouter 凭据", systemImage: statusImage)
+                    Label("OpenRouter 凭据", systemImage: settings.openRouterStatusImage)
                     Spacer(minLength: 8)
-                    Text(statusText)
-                        .foregroundStyle(statusColor)
+                    Text(settings.openRouterStatusText)
+                        .foregroundStyle(settings.openRouterStatusColor)
                 }
             }
             .accessibilityLabel("OpenRouter 凭据")
@@ -232,16 +232,19 @@ private struct OpenRouterCredentialSummarySection: View {
         }
     }
 
-    private var statusText: String {
-        settings.isOpenRouterConfigured ? "已保存 ••••••••" : "未配置"
+}
+
+private extension TTSMixSettings {
+    var openRouterStatusText: String {
+        isOpenRouterConfigured ? "已保存 ••••••••" : "未配置"
     }
 
-    private var statusImage: String {
-        settings.isOpenRouterConfigured ? "checkmark.shield" : "exclamationmark.shield"
+    var openRouterStatusImage: String {
+        isOpenRouterConfigured ? "checkmark.shield" : "exclamationmark.shield"
     }
 
-    private var statusColor: Color {
-        settings.isOpenRouterConfigured ? .green : .secondary
+    var openRouterStatusColor: Color {
+        isOpenRouterConfigured ? .green : .secondary
     }
 }
 
@@ -260,8 +263,8 @@ private struct OpenRouterCredentialsView: View {
         Form {
             Section("配置状态") {
                 LabeledContent("OpenRouter") {
-                    Label(statusText, systemImage: statusImage)
-                        .foregroundStyle(statusColor)
+                    Label(settings.openRouterStatusText, systemImage: settings.openRouterStatusImage)
+                        .foregroundStyle(settings.openRouterStatusColor)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("OpenRouter 配置状态")
@@ -316,18 +319,6 @@ private struct OpenRouterCredentialsView: View {
         } message: {
             Text("删除后付费模型将不可用，旁白会回退到 Edge TTS。")
         }
-    }
-
-    private var statusText: String {
-        settings.isOpenRouterConfigured ? "已保存 ••••••••" : "未配置"
-    }
-
-    private var statusImage: String {
-        settings.isOpenRouterConfigured ? "checkmark.shield" : "exclamationmark.shield"
-    }
-
-    private var statusColor: Color {
-        settings.isOpenRouterConfigured ? .green : .secondary
     }
 
     private var tokenPlaceholder: String {

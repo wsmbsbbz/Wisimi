@@ -250,24 +250,8 @@ private struct TrackBrowserNode: View {
 
     var body: some View {
         Group {
-            if item.node.isFolder {
-                Button {
-                    openFolder(item.node)
-                } label: {
-                    TrackNodeRow(track: item.node, workID: workID)
-                }
-                .buttonStyle(PressFeedbackButtonStyle())
-            } else if item.node.isPlayable, item.node.playbackURL != nil {
-                Button {
-                    playMedia(item.node)
-                } label: {
-                    TrackNodeRow(track: item.node, workID: workID)
-                }
-                .buttonStyle(PressFeedbackButtonStyle())
-            } else if item.node.imagePreviewURL != nil {
-                Button {
-                    previewImage(item)
-                } label: {
+            if let action {
+                Button(action: action) {
                     TrackNodeRow(track: item.node, workID: workID)
                 }
                 .buttonStyle(PressFeedbackButtonStyle())
@@ -276,6 +260,13 @@ private struct TrackBrowserNode: View {
             }
         }
         .copyContextMenu(item.node.title, label: "文件名")
+    }
+
+    private var action: (() -> Void)? {
+        if item.node.isFolder { return { openFolder(item.node) } }
+        if item.node.isPlayable, item.node.playbackURL != nil { return { playMedia(item.node) } }
+        if item.node.imagePreviewURL != nil { return { previewImage(item) } }
+        return nil
     }
 }
 
@@ -294,7 +285,7 @@ private struct ImagePreviewSheet: View {
             .navigationTitle(preview.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("完成") {
                         dismiss()
                     }

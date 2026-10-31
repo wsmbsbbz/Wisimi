@@ -383,49 +383,29 @@ private struct LoginSheet: View {
     @State private var password = ""
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("用户名", text: $name)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-
-                    SecureField("密码", text: $password)
-                }
-
-                if let errorMessage = auth.errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                    }
-                }
-            }
-            .navigationTitle("登录")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+        FormSheet(
+            title: "登录",
+            submit: SheetSubmit(
+                title: "登录",
+                isLoading: auth.isLoading,
+                isDisabled: name.isEmpty || password.isEmpty
+            ) {
+                Task {
+                    await auth.login(name: name, password: password)
+                    if auth.isLoggedIn {
                         dismiss()
+                        onSuccess()
                     }
                 }
+            },
+            errorMessage: auth.errorMessage
+        ) {
+            Section {
+                TextField("用户名", text: $name)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task {
-                            await auth.login(name: name, password: password)
-                            if auth.isLoggedIn {
-                                dismiss()
-                                onSuccess()
-                            }
-                        }
-                    } label: {
-                        if auth.isLoading {
-                            ProgressView()
-                        } else {
-                            Text("登录")
-                        }
-                    }
-                    .disabled(auth.isLoading || name.isEmpty || password.isEmpty)
-                }
+                SecureField("密码", text: $password)
             }
         }
     }
@@ -537,6 +517,8 @@ private struct WorksSearchHeader: View {
         return parts.joined(separator: " · ")
     }
 }
+
+let miniPlayerAvoidanceHeight: CGFloat = 70
 
 private struct MiniPlayerBar: View {
     @ObservedObject var player: WorkAudioPlayer
