@@ -132,32 +132,43 @@ final class WorkAudioPlayer: ObservableObject {
         loadCurrent(siblings: siblings, autoPlay: true)
     }
 
-    func removeLocalWorkFromPlayback(_ id: UUID) {
+    func removeLocalWorkFromPlayback(_ id: UUID, trackID: String? = nil) {
         if workReference == .local(id) {
-            pauseCurrent()
-            setSleepTimer(.off)
-            loadTask?.cancel()
-            durationLoadTask?.cancel()
-            player.replaceCurrentItem(with: nil)
-            queue = []
-            siblings = []
-            workReference = nil
-            workTitle = ""
-            circleName = ""
-            coverURL = nil
-            position = 0
-            duration = 0
-            subtitles = []
-            currentSubtitleIndex = nil
-            playbackError = nil
-            #if os(iOS)
-            artworkTask?.cancel()
-            nowPlayingArtworkURL = nil
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-            #endif
+            if let trackID, let currentID = currentTrack?.id, currentID != trackID,
+               let updatedQueue = Optional(queue.filter { $0.id != trackID }), !updatedQueue.isEmpty,
+               let newIndex = updatedQueue.firstIndex(where: { $0.id == currentID }) {
+                queue = updatedQueue
+                siblings.removeAll { $0.id == trackID }
+                currentIndex = newIndex
+            } else {
+                pauseCurrent()
+                setSleepTimer(.off)
+                loadTask?.cancel()
+                durationLoadTask?.cancel()
+                player.replaceCurrentItem(with: nil)
+                queue = []
+                siblings = []
+                currentIndex = 0
+                workReference = nil
+                workTitle = ""
+                circleName = ""
+                coverURL = nil
+                position = 0
+                duration = 0
+                subtitles = []
+                currentSubtitleIndex = nil
+                playbackError = nil
+                #if os(iOS)
+                artworkTask?.cancel()
+                nowPlayingArtworkURL = nil
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+                #endif
+            }
         }
         if let data = UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey),
-           (try? JSONDecoder().decode(PlaybackSnapshot.self, from: data))?.localWorkID == id {
+           let snapshot = try? JSONDecoder().decode(PlaybackSnapshot.self, from: data),
+           snapshot.localWorkID == id,
+           trackID == nil || snapshot.trackID == trackID {
             UserDefaults.standard.removeObject(forKey: PlaybackSnapshot.storageKey)
         }
     }
@@ -207,7 +218,7 @@ final class WorkAudioPlayer: ObservableObject {
         loadTask?.cancel()
         durationLoadTask?.cancel()
         guard let track = currentTrack,
-              let url = WorkSource.resourceURL(for: track, in: workReference, fallback: track.playbackURL) else { return }
+              let url = track.playbackURL else { return }
 
         endObserver.map(NotificationCenter.default.removeObserver)
         failureObserver.map(NotificationCenter.default.removeObserver)
@@ -268,7 +279,7 @@ final class WorkAudioPlayer: ObservableObject {
 
         loadTask = Task {
             guard let subtitle = siblings.matchingSubtitle(for: track),
-                  let url = WorkSource.resourceURL(for: subtitle, in: workReference, fallback: subtitle.downloadSourceURL),
+                  let url = subtitle.downloadSourceURL,
                   let content = try? await source.subtitleText(at: url), !Task.isCancelled else { return }
             let lines = Self.parseSubtitles(content)
             await MainActor.run {
@@ -398,10 +409,12 @@ final class WorkAudioPlayer: ObservableObject {
     func runDownloadedMediaCheck() async throws {
         try await DownloadStore.shared.prepareDebugDownloads()
         let saved = DownloadStore.shared.savedWork(id: 99999999)!
-        let video = saved.tracks[0]
+        let loaded = try await source.loadWork(.local(saved.localWorkID))
+        let video = loaded.tracks[0]
         let localURL = DownloadStore.shared.localURL(for: video, workID: saved.id)!
+        assert(video.playbackURL == localURL)
         ttsSettings.isEnabled = false
-        play(queue: saved.tracks.playableTracks, start: video, siblings: saved.tracks, work: saved.work.presentation)
+        play(queue: loaded.tracks.playableTracks, start: video, siblings: loaded.tracks, work: loaded.work)
         for _ in 0..<200 {
             if player.currentItem?.status == .readyToPlay && !subtitles.isEmpty { break }
             try await Task.sleep(for: .milliseconds(50))

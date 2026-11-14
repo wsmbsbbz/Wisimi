@@ -32,6 +32,7 @@ nonisolated struct WorkCatalogPage: Sendable {
     let works: [WorkCardSummary]
     let pagination: WorksPagination
     let unreadableCount: Int
+    var totalBytes: Int64 = 0
 }
 
 protocol WorkCatalog: Sendable {
@@ -64,16 +65,21 @@ nonisolated struct SourceWork: Sendable {
     let work: WorkPresentation
     let tracks: [TrackNode]
     var metadataWarning: String? = nil
+    var onlineWorkID: Int? = nil
+}
+
+struct OnlineWorkSnapshot {
+    let work: WorkDetail
+    let tracks: [TrackNode]
 }
 
 @MainActor
 struct OnlineWorkSource {
     let client: ASMRClient
-    var cachedWork: @MainActor (Int) -> DownloadedWork? = { DownloadStore.shared.savedWork(id: $0) }
 
-    func loadWork(_ id: Int, token: String? = nil) async throws -> DownloadedWork {
+    func loadWork(_ id: Int, token: String? = nil) async throws -> OnlineWorkSnapshot {
         let (work, tracks) = try await client.fetchWorkWithTracks(id: id, token: token)
-        return DownloadedWork(work: work, tracks: tracks)
+        return OnlineWorkSnapshot(work: work, tracks: tracks)
     }
 }
 
@@ -85,17 +91,11 @@ struct WorkSource {
     func loadWork(_ reference: WorkReference) async throws -> SourceWork {
         switch reference {
         case .asmrOne(let id):
-            let snapshot: DownloadedWork
-            if let saved = online.cachedWork(id) { snapshot = saved }
-            else { snapshot = try await online.loadWork(id) }
-            return SourceWork(work: snapshot.work.presentation, tracks: snapshot.tracks)
+            let snapshot = try await online.loadWork(id)
+            return SourceWork(work: snapshot.work.presentation, tracks: snapshot.tracks, onlineWorkID: id)
         case .local(let id):
             return try await library.loadWork(id)
         }
-    }
-
-    static func resourceURL(for track: TrackNode, in reference: WorkReference?, fallback: URL?) -> URL? {
-        reference?.onlineID.flatMap { DownloadStore.shared.localURL(for: track, workID: $0) } ?? fallback
     }
 
     func subtitleText(at url: URL) async throws -> String {

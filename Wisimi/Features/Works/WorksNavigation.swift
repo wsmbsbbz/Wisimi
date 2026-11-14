@@ -83,7 +83,6 @@ nonisolated enum WorkReference: Hashable, Sendable {
 
 enum WorksRoute: Hashable {
     case detail(WorkReference)
-    case downloads
     case player
 
     static func replacingPlayer(withDetail workID: WorkReference, in path: [Self]) -> [Self] {

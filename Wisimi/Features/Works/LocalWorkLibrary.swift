@@ -20,9 +20,11 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
     let hasSubtitle: Bool
     let metadataWarning: String?
     let needsDLsiteSync: Bool
+    let onlineWorkID: Int?
+    let byteCount: Int64
 
     enum CodingKeys: String, CodingKey {
-        case id, importedAt, folderName, metadata, hasSubtitle, metadataWarning, needsDLsiteSync
+        case id, importedAt, folderName, metadata, hasSubtitle, metadataWarning, needsDLsiteSync, onlineWorkID, byteCount
     }
 
     init(
@@ -32,7 +34,9 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
         metadata: LocalWorkMetadata,
         hasSubtitle: Bool,
         metadataWarning: String?,
-        needsDLsiteSync: Bool = false
+        needsDLsiteSync: Bool = false,
+        onlineWorkID: Int? = nil,
+        byteCount: Int64 = 0
     ) {
         self.id = id
         self.importedAt = importedAt
@@ -41,6 +45,8 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
         self.hasSubtitle = hasSubtitle
         self.metadataWarning = metadataWarning
         self.needsDLsiteSync = needsDLsiteSync
+        self.onlineWorkID = onlineWorkID
+        self.byteCount = byteCount
     }
 
     init(from decoder: Decoder) throws {
@@ -52,6 +58,8 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
         hasSubtitle = try container.decode(Bool.self, forKey: .hasSubtitle)
         metadataWarning = try container.decodeIfPresent(String.self, forKey: .metadataWarning)
         needsDLsiteSync = try container.decodeIfPresent(Bool.self, forKey: .needsDLsiteSync) ?? false
+        onlineWorkID = try container.decodeIfPresent(Int.self, forKey: .onlineWorkID)
+        byteCount = try container.decodeIfPresent(Int64.self, forKey: .byteCount) ?? 0
     }
 
     var title: String { Self.text(metadata.title) ?? folderName }
@@ -64,7 +72,9 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
             metadata: metadata,
             hasSubtitle: hasSubtitle,
             metadataWarning: warning,
-            needsDLsiteSync: needsDLsiteSync
+            needsDLsiteSync: needsDLsiteSync,
+            onlineWorkID: onlineWorkID,
+            byteCount: byteCount
         )
     }
 
@@ -99,13 +109,13 @@ nonisolated struct LocalImportPlan: Sendable {
     let bytes: Int64
 }
 
+nonisolated struct LocalWorkManifest: Codable, Sendable {
+    let entry: LocalWorkEntry
+    let tracks: [TrackNode]
+}
+
 actor LocalWorkLibrary: WorkCatalog {
     static let shared = LocalWorkLibrary()
-
-    private struct Manifest: Codable {
-        let entry: LocalWorkEntry
-        let tracks: [TrackNode]
-    }
 
     private struct ManifestHeader: Decodable {
         let entry: LocalWorkEntry
@@ -144,9 +154,15 @@ actor LocalWorkLibrary: WorkCatalog {
         let works = entries.dropFirst(start).prefix(pageSize).map { entry in
             entry.presentation(in: contentDirectory(for: entry.id)).card
         }
+        let totalBytes = entries.reduce(Int64(0)) { $0 + max($1.byteCount, 0) }
         return WorkCatalogPage(works: works,
                                pagination: WorksPagination(currentPage: currentPage, pageSize: pageSize, totalCount: entries.count),
-                               unreadableCount: unreadableCount)
+                               unreadableCount: unreadableCount,
+                               totalBytes: totalBytes)
+    }
+
+    func invalidateCatalog() {
+        catalog = nil
     }
 
     private func loadCatalog() throws {
@@ -178,7 +194,7 @@ actor LocalWorkLibrary: WorkCatalog {
         let manifest = try read(id)
         let root = contentDirectory(for: id)
         return SourceWork(work: manifest.entry.presentation(in: root), tracks: resolve(manifest.tracks, in: root),
-                          metadataWarning: manifest.entry.metadataWarning)
+                          metadataWarning: manifest.entry.metadataWarning, onlineWorkID: manifest.entry.onlineWorkID)
     }
 
     nonisolated func contentDirectory(for id: UUID) -> URL {
@@ -207,7 +223,7 @@ actor LocalWorkLibrary: WorkCatalog {
             }
             try files.createDirectory(at: destination, withIntermediateDirectories: true)
             try copy(scan.tracks, from: source, to: destination)
-            return Manifest(entry: scan.entry, tracks: scan.tracks)
+            return LocalWorkManifest(entry: scan.entry, tracks: scan.tracks)
         }
         try JSONEncoder().encode(manifest).write(to: staging.appendingPathComponent("index.json"), options: .atomic)
         try Task.checkCancellation()
@@ -219,10 +235,13 @@ actor LocalWorkLibrary: WorkCatalog {
 
     func remove(_ id: UUID) throws {
         try prepareDirectory()
-        let staging = directory.appendingPathComponent(".remove-\(id.uuidString)", isDirectory: true)
-        try files.moveItem(at: workDirectory(id), to: staging)
+        let workDir = workDirectory(id)
+        if files.fileExists(atPath: workDir.path) {
+            let staging = directory.appendingPathComponent(".remove-\(id.uuidString)", isDirectory: true)
+            try files.moveItem(at: workDir, to: staging)
+            try? files.removeItem(at: staging)
+        }
         catalog?.removeAll { $0.id == id }
-        try? files.removeItem(at: staging)
     }
 
     func syncPendingDLsiteMetadataIfNeeded() async -> Bool {
@@ -242,7 +261,7 @@ actor LocalWorkLibrary: WorkCatalog {
     }
 
     private func performDLsiteSync(for entry: LocalWorkEntry) async -> Bool {
-        guard let rjCode = RJCodeExtractor.extract(from: entry.folderName) else {
+        guard entry.onlineWorkID == nil, let rjCode = RJCodeExtractor.extract(from: entry.folderName) else {
             try? persistUpdatedEntry(entry.updating(metadata: entry.metadata, needsDLsiteSync: false, warning: entry.metadataWarning))
             return false
         }
@@ -288,9 +307,9 @@ actor LocalWorkLibrary: WorkCatalog {
         }
     }
 
-    private func persistUpdatedEntry(_ updated: LocalWorkEntry, manifest: Manifest? = nil) throws {
+    private func persistUpdatedEntry(_ updated: LocalWorkEntry, manifest: LocalWorkManifest? = nil) throws {
         let currentManifest = try manifest ?? read(updated.id)
-        let updatedManifest = Manifest(entry: updated, tracks: currentManifest.tracks)
+        let updatedManifest = LocalWorkManifest(entry: updated, tracks: currentManifest.tracks)
         let indexURL = workDirectory(updated.id).appendingPathComponent("index.json")
         try JSONEncoder().encode(updatedManifest).write(to: indexURL, options: .atomic)
         if let index = catalog?.firstIndex(where: { $0.id == updated.id }) {
@@ -314,9 +333,9 @@ actor LocalWorkLibrary: WorkCatalog {
 
     private func workDirectory(_ id: UUID) -> URL { directory.appendingPathComponent(id.uuidString, isDirectory: true) }
 
-    private func read(_ id: UUID) throws -> Manifest {
+    private func read(_ id: UUID) throws -> LocalWorkManifest {
         let index = workDirectory(id).appendingPathComponent("index.json")
-        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: index))
+        let manifest = try JSONDecoder().decode(LocalWorkManifest.self, from: Data(contentsOf: index))
         guard manifest.entry.id == id else { throw CocoaError(.fileReadCorruptFile) }
         return manifest
     }
@@ -364,7 +383,8 @@ actor LocalWorkLibrary: WorkCatalog {
         let folderName = root.lastPathComponent
         let needsSync = !hasLocalJSON && RJCodeExtractor.extract(from: folderName) != nil
         let entry = LocalWorkEntry(id: id, importedAt: Date(), folderName: folderName, metadata: metadata,
-                                   hasSubtitle: scan.hasSubtitle, metadataWarning: warning, needsDLsiteSync: needsSync)
+                                   hasSubtitle: scan.hasSubtitle, metadataWarning: warning, needsDLsiteSync: needsSync,
+                                   onlineWorkID: nil, byteCount: scan.bytes)
         return (entry, tracks, scan.bytes)
     }
 
@@ -427,9 +447,10 @@ actor LocalWorkLibrary: WorkCatalog {
     private func resolve(_ tracks: [TrackNode], in root: URL) -> [TrackNode] {
         tracks.map { track in
             let url = root.appendingPathComponent(track.title)
+            let exists = !track.isFolder && files.fileExists(atPath: url.path)
             return TrackNode(type: track.type, title: track.title, hash: track.hash, duration: track.duration,
                              children: track.children.map { resolve($0, in: url) },
-                             mediaStreamUrl: track.isFolder ? nil : url.absoluteString,
+                             mediaStreamUrl: exists ? url.absoluteString : nil,
                              mediaDownloadUrl: nil, size: track.size)
         }
     }

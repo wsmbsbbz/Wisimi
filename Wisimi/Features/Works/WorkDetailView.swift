@@ -9,6 +9,7 @@ struct WorkDetailView: View {
     let onSearch: (String, String) -> Void
     let onLoginRequired: () -> Void
     let onOpenWork: (WorkReference) -> Void
+    var onOpenLocalLibrary: (() -> Void)? = nil
 
     @State private var downloads = DownloadStore.shared
     @State private var pageState: WorkDetailPageState
@@ -19,7 +20,8 @@ struct WorkDetailView: View {
 
     init(workID: Int, client: ASMRClient, auth: AuthSession, player: WorkAudioPlayer,
          reservesMiniPlayerSpace: Bool, onSearch: @escaping (String, String) -> Void,
-         onLoginRequired: @escaping () -> Void, onOpenWork: @escaping (WorkReference) -> Void) {
+         onLoginRequired: @escaping () -> Void, onOpenWork: @escaping (WorkReference) -> Void,
+         onOpenLocalLibrary: (() -> Void)? = nil) {
         self.workID = workID
         self.client = client
         self.auth = auth
@@ -28,6 +30,7 @@ struct WorkDetailView: View {
         self.onSearch = onSearch
         self.onLoginRequired = onLoginRequired
         self.onOpenWork = onOpenWork
+        self.onOpenLocalLibrary = onOpenLocalLibrary
         _pageState = State(initialValue: WorkDetailPageState(client: client))
         _similarWorks = State(initialValue: SimilarWorksState(workID: workID, client: client))
     }
@@ -57,6 +60,23 @@ struct WorkDetailView: View {
                             }
                         }
 
+                        if let saved = downloads.savedWork(id: work.id),
+                           let summary = downloads.summary(forLocalWork: saved.localWorkID) {
+                            InfoCard {
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 12) {
+                                        localCopyStatus(summary: summary)
+                                        Spacer(minLength: 8)
+                                        openLocalCopyButton(localWorkID: saved.localWorkID)
+                                    }
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        localCopyStatus(summary: summary)
+                                        openLocalCopyButton(localWorkID: saved.localWorkID)
+                                    }
+                                }
+                            }
+                        }
+
                         InfoCard {
                             TrackBrowserView(
                                 work: work.presentation,
@@ -64,9 +84,9 @@ struct WorkDetailView: View {
                                 tracks: pageState.tracks,
                                 currentPath: $pageState.currentPath,
                                 isPathMenuExpanded: $pageState.isPathMenuExpanded,
-                                player: player
+                                player: player,
+                                onOpenLocalLibrary: onOpenLocalLibrary
                             )
-                            .id("track-browser")
                         }
 
                         if let error = pageState.errorMessage {
@@ -97,13 +117,6 @@ struct WorkDetailView: View {
         }
         .navigationTitle("作品详情")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink(value: WorksRoute.downloads) {
-                    Label("下载管理", systemImage: "arrow.down.circle")
-                }
-            }
-        }
         .task {
             await loadDetail(force: false)
         }
@@ -112,11 +125,6 @@ struct WorkDetailView: View {
             await similarWorks.loadIfNeeded()
         }
         #if DEBUG
-        .onChange(of: pageState.work?.id) {
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("download") == true {
-                scrollPosition.scrollTo(id: "track-browser", anchor: .top)
-            }
-        }
         .onChange(of: similarWorks.shouldShowSection) {
             if similarWorks.shouldShowSection, ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("similar") == true {
                 similarWorks.isExpanded = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SIMILAR_EXPANDED"] == "1"
@@ -130,15 +138,27 @@ struct WorkDetailView: View {
     }
 
     private func loadDetail(force: Bool) async {
-        #if DEBUG
-        if workID == 99999999, ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("download") == true {
-            while downloads.savedWork(id: workID) == nil { try? await Task.sleep(for: .milliseconds(20)) }
-            let saved = downloads.savedWork(id: workID)!
-            pageState.prepareDebugSnapshot(saved)
-            return
-        }
-        #endif
         await pageState.load(workID: workID, token: auth.token, force: force)
+    }
+
+    private func localCopyStatus(summary: DownloadSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("已下载 \(summary.completed)/\(summary.total) 个文件到本地", systemImage: "folder.fill")
+                .font(.subheadline.weight(.medium))
+            if summary.hasUnfinished, !summary.statusText.isEmpty {
+                Text(summary.statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func openLocalCopyButton(localWorkID: UUID) -> some View {
+        Button("打开本地作品") {
+            onOpenWork(.local(localWorkID))
+        }
+        .buttonStyle(.bordered)
+        .frame(minHeight: 44)
     }
 
     private func mark(_ status: ReviewStatus?) {

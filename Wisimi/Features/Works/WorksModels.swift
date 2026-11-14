@@ -196,7 +196,6 @@ nonisolated struct TrackNode: Codable, Identifiable, Sendable {
         guard isImage else { return nil }
         return (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
     }
-    var downloadURL: URL? { mediaDownloadUrl.flatMap(URL.init(string:)) }
     var downloadSourceURL: URL? {
         guard !isFolder else { return nil }
         return (mediaDownloadUrl ?? mediaStreamUrl).flatMap(URL.init(string:))

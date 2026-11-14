@@ -21,8 +21,8 @@ final class WorkDetailPageState {
     private var loadTask: Task<Void, Never>?
     private let source: OnlineWorkSource
 
-    init(client: ASMRClient, cachedWork: @escaping @MainActor (Int) -> DownloadedWork? = { DownloadStore.shared.savedWork(id: $0) }) {
-        source = OnlineWorkSource(client: client, cachedWork: cachedWork)
+    init(client: ASMRClient) {
+        source = OnlineWorkSource(client: client)
     }
 
     func load(workID: Int, token: String?, force: Bool = false) async {
@@ -31,9 +31,7 @@ final class WorkDetailPageState {
             requestedToken = token
             workGeneration = UUID()
         }
-        let saved = source.cachedWork(workID)
-        if work == nil, let saved { apply(work: saved.work, tracks: saved.tracks, workID: workID) }
-        guard force || saved != nil || loadedWorkID != workID || work == nil else { return }
+        guard force || loadedWorkID != workID || work == nil else { return }
         loadTask?.cancel()
         let id = UUID()
         let revision = markRevision
@@ -87,10 +85,4 @@ final class WorkDetailPageState {
         if previousPath == nil { isPathMenuExpanded = false }
         loadedWorkID = workID
     }
-
-    #if DEBUG
-    func prepareDebugSnapshot(_ saved: DownloadedWork) {
-        apply(work: saved.work, tracks: saved.tracks, workID: saved.id)
-    }
-    #endif
 }

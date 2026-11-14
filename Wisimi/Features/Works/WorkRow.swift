@@ -6,6 +6,8 @@ private let tagRowHeight: CGFloat = 30
 struct WorkRow: View {
     let work: WorkCardSummary
     let width: CGFloat
+    @State private var downloads = DownloadStore.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let contentWidth = max(width - 20, 0)
@@ -18,6 +20,21 @@ struct WorkRow: View {
                 contentMode: .fit,
                 placeholderWhenMissing: work.id.localID != nil
             )
+            .overlay(alignment: .bottomLeading) {
+                if let localID = work.id.localID,
+                   let summary = downloads.summary(forLocalWork: localID),
+                   let badgeText = summary.cardBadgeText {
+                    Label(badgeText, systemImage: summary.cardBadgeSymbol)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: .capsule)
+                        .padding(8)
+                        .animation(reduceMotion ? nil : .default, value: badgeText)
+                        .accessibilityLabel("下载状态：\(badgeText)")
+                }
+            }
 
             VStack(alignment: .leading, spacing: 12) {
                 TitleBlock(work: work)

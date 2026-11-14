@@ -54,14 +54,11 @@ struct WorksListView: View {
             }
         }
         _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
-        if debugScreen?.hasPrefix("downloads") == true {
-            _path = State(initialValue: [.downloads])
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_DOWNLOAD_MINIPLAYER"] == "1" {
-                try? player.prepareDebugPlayback()
-            }
+        if debugScreen?.hasPrefix("download") == true,
+           ProcessInfo.processInfo.environment["WISIMI_DEBUG_DOWNLOAD_MINIPLAYER"] == "1" {
+            try? player.prepareDebugPlayback()
         }
-        if debugScreen == "download-detail" || debugScreen == "download-selection" { _path = State(initialValue: [.detail(.asmrOne(99999999))]) }
-        _showsLocalLibrary = State(initialValue: debugScreen == "local-library")
+        _showsLocalLibrary = State(initialValue: debugScreen == "local-library" || debugScreen?.hasPrefix("downloads") == true || debugScreen == "download-local-detail")
         if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" || debugScreen == "narration" {
             try? player.prepareDebugPlayback()
             if debugScreen == "narration" { try? player.prepareDebugNarrationPreview() }
@@ -253,13 +250,6 @@ struct WorksListView: View {
         }
 
         ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                path.append(.downloads)
-            } label: {
-                Label("下载管理", systemImage: "arrow.down.circle")
-            }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
             if !showsLocalLibrary && isLoading && !works.isEmpty {
                 ProgressView()
             }
@@ -278,13 +268,21 @@ struct WorksListView: View {
                 reservesMiniPlayerSpace: shouldShowMiniPlayer,
                 onSearch: search,
                 onLoginRequired: { isLoginPresented = true },
-                onOpenWork: { path.append(.detail($0)) }
+                onOpenWork: { path.append(.detail($0)) },
+                onOpenLocalLibrary: {
+                    showsLocalLibrary = true
+                    path = []
+                }
             )
         case .detail(.local(let id)):
-            LocalWorkDetailView(id: id, source: source, player: player,
-                                reservesMiniPlayerSpace: shouldShowMiniPlayer) { localRevision += 1 }
-        case .downloads:
-            DownloadsView { path.append(.detail(.asmrOne($0))) }
+            LocalWorkDetailView(
+                id: id,
+                source: source,
+                player: player,
+                reservesMiniPlayerSpace: shouldShowMiniPlayer,
+                onOpenOnlineWork: { onlineID in path.append(.detail(.asmrOne(onlineID))) },
+                onDeleted: { localRevision += 1 }
+            )
         case .player:
             PlayerView(player: player, openWorkDetail: openPlayingWorkDetail)
         }
@@ -331,8 +329,12 @@ struct WorksListView: View {
             return
         }
         if let screen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"], screen.hasPrefix("download") {
-            do { try await DownloadStore.shared.prepareDebugDownloads() }
-            catch { DownloadStore.shared.message = error.localizedDescription }
+            do {
+                try await DownloadStore.shared.prepareDebugDownloads()
+                if screen == "download-local-detail", let saved = DownloadStore.shared.savedWork(id: 99999999) {
+                    path = [.detail(.local(saved.localWorkID))]
+                }
+            } catch { DownloadStore.shared.message = error.localizedDescription }
             return
         }
         if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "list-error" {

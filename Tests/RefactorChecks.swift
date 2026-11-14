@@ -178,6 +178,35 @@ struct RefactorChecks {
         let reloaded = try await reopened.page(1, pageSize: 12, refresh: true)
         assert(reloaded.unreadableCount == 1)
         assert(Set(reloaded.works.map(\.id)) == [.local(registered.id), .local(unsafe.id), .local(malformed.id)])
+        assert(reloaded.totalBytes > 0)
+
+        // Coexistence of downloaded manifest and imported works in the same LocalWorkLibrary
+        let downloadID = UUID()
+        let downloadDir = storage.appendingPathComponent(downloadID.uuidString, isDirectory: true)
+        let downloadFiles = downloadDir.appendingPathComponent("files", isDirectory: true)
+        try files.createDirectory(at: downloadFiles, withIntermediateDirectories: true)
+        try Data("audio".utf8).write(to: downloadFiles.appendingPathComponent("01.mp3"))
+        let downloadEntry = LocalWorkEntry(
+            id: downloadID,
+            importedAt: Date().addingTimeInterval(60),
+            folderName: "RJ99999999 下载测试",
+            metadata: LocalWorkMetadata(title: "下载来源测试", circle: "测试社团", catalogCode: "RJ99999999"),
+            hasSubtitle: false,
+            metadataWarning: nil,
+            needsDLsiteSync: false,
+            onlineWorkID: 99999999,
+            byteCount: 5
+        )
+        let downloadTrack = TrackNode(type: "audio", title: "01.mp3", hash: "01.mp3", duration: 10, children: nil,
+                                      mediaStreamUrl: nil, mediaDownloadUrl: nil, size: 5)
+        try JSONEncoder().encode(LocalWorkManifest(entry: downloadEntry, tracks: [downloadTrack]))
+            .write(to: downloadDir.appendingPathComponent("index.json"))
+        let combined = try await reopened.page(1, pageSize: 12, refresh: true)
+        assert(combined.works.first?.id == .local(downloadID))
+        assert(combined.totalBytes == reloaded.totalBytes + 5)
+        let loadedDownload = try await reopened.loadWork(downloadID)
+        assert(loadedDownload.onlineWorkID == 99999999)
+        assert(loadedDownload.tracks.first?.playbackURL?.isFileURL == true)
     }
 
     @MainActor static func dlsiteMetadataChecks() async throws {
@@ -564,7 +593,7 @@ struct RefactorChecks {
     }
 
     @MainActor static func detailChecks() async throws {
-        let detail = WorkDetailPageState(client: client(), cachedWork: { _ in nil })
+        let detail = WorkDetailPageState(client: client())
         HTTPStub.respond = { request in
             (200, request.url!.path.contains("/tracks/") ? #"[{"type":"folder","title":"root","hash":"root","children":[]}]"# : workJSON)
         }
@@ -707,7 +736,7 @@ struct RefactorChecks {
         let gate = RequestGate()
         HTTPStub.hold = { request in request.request.url!.path.contains("/1") ? gate.hold(request) : false }
         HTTPStub.respond = { request in (200, request.url!.path.contains("/tracks/") ? "[]" : workJSON.replacingOccurrences(of: "\"id\":1", with: "\"id\":2")) }
-        let detail = WorkDetailPageState(client: client(), cachedWork: { _ in nil })
+        let detail = WorkDetailPageState(client: client())
         let old = Task { await detail.load(workID: 1, token: nil) }
         try await waitUntil { gate.count >= 2 }
         await detail.load(workID: 2, token: nil)
@@ -717,7 +746,7 @@ struct RefactorChecks {
         HTTPStub.hold = nil
 
         HTTPStub.respond = { request in (200, request.url!.path.contains("/tracks/") ? "[]" : workJSON) }
-        let marked = WorkDetailPageState(client: client(), cachedWork: { _ in nil })
+        let marked = WorkDetailPageState(client: client())
         await marked.load(workID: 1, token: "test")
         HTTPStub.hold = { request in request.request.url!.path.hasSuffix("/review") ? gate.hold(request) : false }
         let marking = Task { await marked.mark(.listening, token: "test") }
@@ -748,12 +777,6 @@ struct RefactorChecks {
         await oldAccountMark.value
         assert(marked.work?.progress == nil, "Old account must not write back after logout")
         HTTPStub.hold = nil
-
-        HTTPStub.respond = { _ in throw URLError(.notConnectedToInternet) }
-        let work = try JSONDecoder().decode(WorkDetail.self, from: Data(workJSON.utf8))
-        let cached = WorkDetailPageState(client: client(), cachedWork: { _ in DownloadedWork(work: work, tracks: []) })
-        await cached.load(workID: 1, token: nil)
-        assert(cached.work?.id == 1 && cached.errorMessage != nil)
 
         HTTPStub.hold = { gate.hold($0) }
         let catalog = PlaylistCatalog(client: client())
