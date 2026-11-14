@@ -100,6 +100,9 @@ struct RefactorChecks {
         let storage = root.appendingPathComponent("Library")
         let library = LocalWorkLibrary(directory: storage, requiresSecurityScope: false)
         let source = WorkSource(online: OnlineWorkSource(client: ASMRClient()), library: library)
+        let catalog: any WorkCatalog = library
+        let emptyPage = try await catalog.page(1, pageSize: 2, refresh: false)
+        assert(emptyPage.works.isEmpty && emptyPage.pagination.currentPage == 1)
         for name in ["Track 2", "Track 10"] {
             let folder = original.appendingPathComponent(name)
             try files.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -128,6 +131,12 @@ struct RefactorChecks {
         let metadataURL = original.appendingPathComponent("wisimi.json")
         try Data(#"{"title":"注册标题","circle":"本地社团","duration":120,"rating":4.5,"sales":12,"catalogCode":"TEST-7","tags":["雨声","雨声"],"voiceActors":["测试声优"],"cover":"Track 2/封面.png"}"#.utf8).write(to: metadataURL)
         let registered = try await library.importWork(library.inspect(original))
+        let firstPage = try await catalog.page(1, pageSize: 1, refresh: false)
+        assert(firstPage.pagination.totalCount == 2 && firstPage.pagination.totalPages == 2)
+        assert(firstPage.works.map(\.id) == [.local(registered.id)])
+        assert(firstPage.works.first?.tags.map(\.name) == ["雨声"])
+        let secondPage = try await catalog.page(2, pageSize: 1, refresh: false)
+        assert(secondPage.works.map(\.id) == [.local(plain.id)])
         let reopened = LocalWorkLibrary(directory: storage, requiresSecurityScope: false)
         let saved = try await reopened.loadWork(registered.id)
         assert(saved.work.title == "注册标题" && saved.work.circle == "本地社团")
@@ -155,11 +164,19 @@ struct RefactorChecks {
         let failed = try? await library.inspect(empty)
         assert(failed == nil)
         try await library.remove(plain.id)
-        let remaining = try await reopened.list()
-        assert(Set(remaining.map(\.id)) == [registered.id, unsafe.id, malformed.id])
+        let remaining = try await catalog.page(4, pageSize: 1, refresh: false)
+        assert(remaining.pagination.currentPage == 3 && remaining.pagination.totalCount == 3)
+        assert(remaining.works.map(\.id) == [.local(registered.id)])
         assert(files.fileExists(atPath: nestedCover.path) && files.fileExists(atPath: metadataURL.path))
         let storedDirectories = try files.contentsOfDirectory(atPath: storage.path)
         assert(storedDirectories.allSatisfy { UUID(uuidString: $0) != nil })
+
+        let broken = storage.appendingPathComponent(UUID().uuidString)
+        try files.createDirectory(at: broken, withIntermediateDirectories: true)
+        try Data("{".utf8).write(to: broken.appendingPathComponent("index.json"))
+        let reloaded = try await reopened.page(1, pageSize: 12, refresh: true)
+        assert(reloaded.unreadableCount == 1)
+        assert(Set(reloaded.works.map(\.id)) == [.local(registered.id), .local(unsafe.id), .local(malformed.id)])
     }
 
     @MainActor static func speechChecks() async throws {

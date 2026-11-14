@@ -53,12 +53,16 @@ nonisolated struct LocalImportPlan: Sendable {
     let bytes: Int64
 }
 
-actor LocalWorkLibrary {
+actor LocalWorkLibrary: WorkCatalog {
     static let shared = LocalWorkLibrary()
 
     private struct Manifest: Codable {
         let entry: LocalWorkEntry
         let tracks: [TrackNode]
+    }
+
+    private struct ManifestHeader: Decodable {
+        let entry: LocalWorkEntry
     }
 
     private struct Scan {
@@ -72,6 +76,8 @@ actor LocalWorkLibrary {
     private let requiresSecurityScope: Bool
     private let files = FileManager.default
     private var isPrepared = false
+    private var catalog: [LocalWorkEntry]?
+    private var unreadableCount = 0
 
     init(directory: URL = URL.applicationSupportDirectory.appending(path: "LocalWorks", directoryHint: .isDirectory),
          requiresSecurityScope: Bool = true) {
@@ -79,14 +85,44 @@ actor LocalWorkLibrary {
         self.requiresSecurityScope = requiresSecurityScope
     }
 
-    func list() throws -> [LocalWorkEntry] {
+    func page(_ number: Int, pageSize: Int, refresh: Bool) throws -> WorkCatalogPage {
+        precondition(pageSize > 0)
+        if refresh || catalog == nil { try loadCatalog() }
+        let entries = catalog ?? []
+        let pageCount = entries.isEmpty ? 1 : (entries.count - 1) / pageSize + 1
+        let currentPage = min(max(number, 1), pageCount)
+        let start = (currentPage - 1) * pageSize
+        let works = entries.dropFirst(start).prefix(pageSize).map { entry in
+            entry.presentation(in: contentDirectory(for: entry.id)).card
+        }
+        return WorkCatalogPage(works: works,
+                               pagination: WorksPagination(currentPage: currentPage, pageSize: pageSize, totalCount: entries.count),
+                               unreadableCount: unreadableCount)
+    }
+
+    private func loadCatalog() throws {
         try prepareDirectory()
-        return try files.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
-            .compactMap { URL in
-                guard let id = UUID(uuidString: URL.lastPathComponent) else { return nil }
-                return try read(id).entry
+        let folders = try files.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+        var entries: [LocalWorkEntry] = []
+        var failed = 0
+        for folder in folders {
+            try Task.checkCancellation()
+            guard let id = UUID(uuidString: folder.lastPathComponent) else { continue }
+            do {
+                let index = folder.appendingPathComponent("index.json")
+                let header = try JSONDecoder().decode(ManifestHeader.self, from: Data(contentsOf: index))
+                guard header.entry.id == id else { throw CocoaError(.fileReadCorruptFile) }
+                entries.append(header.entry)
+            } catch {
+                failed += 1
             }
-            .sorted { ($0.importedAt, $0.id.uuidString) > ($1.importedAt, $1.id.uuidString) }
+        }
+        catalog = entries.sorted(by: Self.newestFirst)
+        unreadableCount = failed
+    }
+
+    private nonisolated static func newestFirst(_ first: LocalWorkEntry, _ second: LocalWorkEntry) -> Bool {
+        (first.importedAt, first.id.uuidString) > (second.importedAt, second.id.uuidString)
     }
 
     func loadWork(_ id: UUID) throws -> SourceWork {
@@ -127,6 +163,8 @@ actor LocalWorkLibrary {
         try JSONEncoder().encode(manifest).write(to: staging.appendingPathComponent("index.json"), options: .atomic)
         try Task.checkCancellation()
         try files.moveItem(at: staging, to: workDirectory(id))
+        catalog?.append(manifest.entry)
+        catalog?.sort(by: Self.newestFirst)
         return manifest.entry
     }
 
@@ -134,6 +172,7 @@ actor LocalWorkLibrary {
         try prepareDirectory()
         let staging = directory.appendingPathComponent(".remove-\(id.uuidString)", isDirectory: true)
         try files.moveItem(at: workDirectory(id), to: staging)
+        catalog?.removeAll { $0.id == id }
         try? files.removeItem(at: staging)
     }
 
@@ -155,7 +194,9 @@ actor LocalWorkLibrary {
 
     private func read(_ id: UUID) throws -> Manifest {
         let index = workDirectory(id).appendingPathComponent("index.json")
-        return try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: index))
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: index))
+        guard manifest.entry.id == id else { throw CocoaError(.fileReadCorruptFile) }
+        return manifest
     }
 
     private func coordinatedRead<T>(_ source: URL, _ operation: (URL) throws -> T) throws -> T {

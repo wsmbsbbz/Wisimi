@@ -5,7 +5,7 @@ struct WorksResponse: Decodable {
     let pagination: WorksPagination
 }
 
-struct WorksPagination: Decodable {
+nonisolated struct WorksPagination: Decodable, Sendable {
     let currentPage: Int
     let pageSize: Int
     let totalCount: Int
@@ -102,10 +102,6 @@ struct WorkSummary: Decodable, Identifiable {
     let vas: [NameItem]
 
     var thumbnailCoverURL: URL? { thumbnailCover.flatMap(URL.init(string:)) }
-    var ratingText: String { rateAverage.map { String(format: "%.1f", $0) } ?? "-" }
-    var durationText: String { duration.formattedDuration }
-    var visibleVoiceActors: [String] { vas.prefix(2).map(\.name) }
-    var hiddenVoiceActorCount: Int { max(vas.count - visibleVoiceActors.count, 0) }
 
     private enum CodingKeys: String, CodingKey {
         case id

@@ -1,5 +1,43 @@
 import Foundation
 
+nonisolated struct WorkCardSummary: Identifiable, Sendable {
+    let id: WorkReference
+    let title: String
+    let circle: String?
+    let duration: Double?
+    let rating: Double?
+    let hasSubtitle: Bool
+    let coverURL: URL?
+    let tags: [NameItem]
+    let voiceActors: [NameItem]
+}
+
+extension WorkSummary {
+    var card: WorkCardSummary {
+        WorkCardSummary(id: .asmrOne(id), title: title, circle: name, duration: duration,
+                        rating: rateAverage, hasSubtitle: hasSubtitle, coverURL: thumbnailCoverURL,
+                        tags: tags, voiceActors: vas)
+    }
+}
+
+extension WorkPresentation {
+    nonisolated var card: WorkCardSummary {
+        WorkCardSummary(id: reference, title: title, circle: circle, duration: duration,
+                        rating: rating, hasSubtitle: hasSubtitle, coverURL: coverURL,
+                        tags: tags, voiceActors: voiceActors)
+    }
+}
+
+nonisolated struct WorkCatalogPage: Sendable {
+    let works: [WorkCardSummary]
+    let pagination: WorksPagination
+    let unreadableCount: Int
+}
+
+protocol WorkCatalog: Sendable {
+    func page(_ number: Int, pageSize: Int, refresh: Bool) async throws -> WorkCatalogPage
+}
+
 nonisolated struct WorkPresentation: Sendable {
     let reference: WorkReference
     let title: String

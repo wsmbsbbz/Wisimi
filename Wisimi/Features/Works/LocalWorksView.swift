@@ -3,24 +3,23 @@ import UniformTypeIdentifiers
 
 struct LocalWorksView: View {
     let library: LocalWorkLibrary
+    let catalog: any WorkCatalog
     let refreshID: Int?
-    let openWork: (UUID) -> Void
+    let reservesMiniPlayerSpace: Bool
+    let openWork: (WorkReference) -> Void
 
-    @State private var entries: [LocalWorkEntry] = []
-    @State private var search = ""
+    @State private var page: WorkCatalogPage?
+    @State private var loadRequest = UUID()
+    @State private var requestedPage = 1
     @State private var loadError: String?
-    @State private var isLoaded = false
+    @State private var isLoading = false
+    @State private var scrollPosition = ScrollPosition()
     @State private var showsPicker = false
     @State private var confirmsImport = false
     @State private var plan: LocalImportPlan?
     @State private var importTask: Task<Void, Never>?
     @State private var importStatus: String?
     @State private var importError: String?
-
-    private var visibleEntries: [LocalWorkEntry] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty ? entries : entries.filter { $0.title.localizedStandardContains(query) }
-    }
 
     var body: some View {
         ScrollView {
@@ -41,53 +40,42 @@ struct LocalWorksView: View {
                     }
                 }
 
-                if !entries.isEmpty {
-                    TextField("搜索本地作品", text: $search)
-                        .textFieldStyle(.roundedBorder)
-                }
-
                 if let loadError {
-                    RetryView(message: loadError) { await reload() }
+                    RetryView(message: loadError) { await load(requestedPage, refresh: true) }
                 }
-                if !isLoaded {
+                if page == nil, loadError == nil {
                     ProgressView("读取本地作品…")
                         .frame(maxWidth: .infinity)
-                } else if entries.isEmpty, loadError == nil {
-                    ContentUnavailableView("还没有本地作品", systemImage: "folder", description: Text("从「文件」选择一个作品文件夹。"))
-                } else if visibleEntries.isEmpty, loadError == nil {
-                    ContentUnavailableView.search(text: search)
-                }
-
-                LazyVStack(spacing: 8) {
-                    ForEach(visibleEntries) { entry in
-                        let work = entry.presentation(in: library.contentDirectory(for: entry.id))
-                        Button { openWork(entry.id) } label: {
-                            HStack(spacing: 12) {
-                                CoverImage(url: work.coverURL, cornerRadius: 8, size: CGSize(width: 58, height: 58),
-                                           placeholderWhenMissing: true)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(work.title).font(.headline)
-                                    if let circle = work.circle {
-                                        Text(circle).font(.subheadline).foregroundStyle(.secondary)
-                                    }
-                                }
-                                .multilineTextAlignment(.leading)
-                                Spacer(minLength: 0)
-                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                            }
-                            .padding(10)
-                            .background(.thinMaterial, in: .rect(cornerRadius: 12))
-                            .contentShape(.rect)
-                        }
-                        .buttonStyle(.plain)
+                } else if let page {
+                    if page.unreadableCount > 0 {
+                        Text("有 \(page.unreadableCount) 部作品无法读取。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
+                    if page.works.isEmpty, loadError == nil, page.unreadableCount == 0 {
+                        ContentUnavailableView("还没有本地作品", systemImage: "folder", description: Text("从「文件」选择一个作品文件夹。"))
+                    } else if !page.works.isEmpty {
+                        MasonryGrid(works: page.works, onSelect: openWork)
+                            .id(page.pagination.currentPage)
+                        if page.pagination.totalPages > 1 {
+                            PaginationControls(currentPage: page.pagination.currentPage, totalPages: page.pagination.totalPages,
+                                               isLoading: isLoading) { number in
+                                Task { await load(number, scrollToTop: true) }
+                            }
+                        }
+                    }
+                }
+                if reservesMiniPlayerSpace {
+                    Color.clear.frame(height: miniPlayerAvoidanceHeight)
                 }
             }
             .padding(16)
         }
-        .scrollDismissesKeyboard(.interactively)
-        .task(id: refreshID) { if refreshID != nil { await reload() } }
-        .refreshable { await reload() }
+        .scrollPosition($scrollPosition)
+        .task(id: refreshID) {
+            if refreshID != nil { await load(page?.pagination.currentPage ?? 1) }
+        }
+        .refreshable { await load(page?.pagination.currentPage ?? 1, refresh: true) }
         .fileImporter(isPresented: $showsPicker, allowedContentTypes: [.folder], onCompletion: inspectSelection)
         .confirmationDialog("导入作品副本", isPresented: $confirmsImport, titleVisibility: .visible, presenting: plan) { plan in
             Button("复制并导入") { runImportTask("正在复制作品…") { try await importWork(plan) } }
@@ -102,17 +90,24 @@ struct LocalWorksView: View {
         }
     }
 
-    private func reload() async {
+    private func load(_ number: Int, refresh: Bool = false, scrollToTop: Bool = false) async {
+        let request = UUID()
+        loadRequest = request
+        requestedPage = number
+        isLoading = true
+        defer { if loadRequest == request { isLoading = false } }
         do {
-            let result = try await library.list()
-            guard !Task.isCancelled else { return }
-            entries = result
+            let result = try await catalog.page(number, pageSize: 12, refresh: refresh)
+            guard loadRequest == request, !Task.isCancelled else { return }
+            page = result
             loadError = nil
+            if scrollToTop || result.pagination.currentPage != number {
+                scrollPosition.scrollTo(edge: .top)
+            }
         } catch {
-            guard !Task.isCancelled else { return }
+            guard loadRequest == request, !Task.isCancelled else { return }
             loadError = error.userFacingMessage
         }
-        isLoaded = true
     }
 
     private func inspectSelection(_ result: Result<URL, Error>) {
@@ -129,10 +124,8 @@ struct LocalWorksView: View {
     }
 
     private func importWork(_ plan: LocalImportPlan) async throws {
-        let entry = try await library.importWork(plan)
-        await reload()
-        search = ""
-        openWork(entry.id)
+        _ = try await library.importWork(plan)
+        await load(1, scrollToTop: true)
     }
 
     private func runImportTask(_ status: String, operation: @escaping @MainActor () async throws -> Void) {

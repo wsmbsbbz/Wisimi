@@ -4,7 +4,7 @@ private let maxTagRows = 10
 private let tagRowHeight: CGFloat = 30
 
 struct WorkRow: View {
-    let work: WorkSummary
+    let work: WorkCardSummary
     let width: CGFloat
 
     var body: some View {
@@ -12,10 +12,11 @@ struct WorkRow: View {
 
         VStack(alignment: .leading, spacing: 0) {
             CoverImage(
-                url: work.thumbnailCoverURL,
+                url: work.coverURL,
                 cornerRadius: 0,
                 size: CGSize(width: width, height: width * 3 / 4),
-                contentMode: .fit
+                contentMode: .fit,
+                placeholderWhenMissing: work.id.localID != nil
             )
 
             VStack(alignment: .leading, spacing: 12) {
@@ -37,7 +38,7 @@ struct WorkRow: View {
 }
 
 private struct TitleBlock: View {
-    let work: WorkSummary
+    let work: WorkCardSummary
 
     var body: some View {
         Text(work.title)
@@ -50,36 +51,41 @@ private struct TitleBlock: View {
 }
 
 private struct WorkChipsFlow: View {
-    let work: WorkSummary
+    let work: WorkCardSummary
     let maxWidth: CGFloat
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         ChipFlowLayout(spacing: 6) {
-            if let rateAverage = work.rateAverage, rateAverage > 0 {
-                MetricPill(text: work.ratingText, systemImage: "star.fill")
+            if let rating = work.rating, rating > 0 {
+                MetricPill(text: String(format: "%.1f", rating), systemImage: "star.fill")
             }
 
-            MetricPill(text: work.durationText, systemImage: "clock")
+            if work.duration != nil || work.id.onlineID != nil {
+                MetricPill(text: work.duration.formattedDuration, systemImage: "clock")
+            }
 
             if work.hasSubtitle {
                 MetricPill(text: "字幕", systemImage: "captions.bubble")
             }
 
-            ForEach(work.visibleVoiceActors, id: \.self) { actor in
-                VoiceActorChip(text: actor)
+            ForEach(work.voiceActors.prefix(2)) { actor in
+                VoiceActorChip(text: actor.name)
             }
-            if work.hiddenVoiceActorCount > 0 {
-                VoiceActorChip(text: "+\(work.hiddenVoiceActorCount)")
+            if work.voiceActors.count > 2 {
+                VoiceActorChip(text: "+\(work.voiceActors.count - 2)")
             }
 
-            CircleChip(text: work.name)
+            if let circle = work.circle {
+                CircleChip(text: circle)
+            }
 
             ForEach(work.tags) { tag in
                 TagChip(text: tag.name)
             }
         }
         .frame(width: maxWidth, alignment: .leading)
-        .frame(maxHeight: CGFloat(maxTagRows) * tagRowHeight, alignment: .top)
+        .frame(maxHeight: dynamicTypeSize.isAccessibilitySize ? nil : CGFloat(maxTagRows) * tagRowHeight, alignment: .top)
         .clipped()
     }
 }

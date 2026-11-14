@@ -66,7 +66,7 @@ enum WorksFilterContextSelfCheck {
 }
 
 
-enum WorkReference: Hashable, Sendable {
+nonisolated enum WorkReference: Hashable, Sendable {
     case asmrOne(Int)
     case local(UUID)
 

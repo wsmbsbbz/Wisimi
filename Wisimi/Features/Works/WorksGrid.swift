@@ -4,17 +4,17 @@ struct MasonryGrid: View {
     private let columnSpacing: CGFloat = 12
     private let rowSpacing: CGFloat = 12
 
-    let works: [WorkSummary]
-    let onSelect: (WorkSummary) -> Void
+    let works: [WorkCardSummary]
+    let onSelect: (WorkReference) -> Void
     @State private var availableWidth: CGFloat = 0
 
-    private var leftColumn: [WorkSummary] {
+    private var leftColumn: [WorkCardSummary] {
         works.enumerated().compactMap { index, work in
             index.isMultiple(of: 2) ? work : nil
         }
     }
 
-    private var rightColumn: [WorkSummary] {
+    private var rightColumn: [WorkCardSummary] {
         works.enumerated().compactMap { index, work in
             index.isMultiple(of: 2) ? nil : work
         }
@@ -45,11 +45,11 @@ struct MasonryGrid: View {
         }
     }
 
-    private func column(_ works: [WorkSummary]) -> some View {
+    private func column(_ works: [WorkCardSummary]) -> some View {
         LazyVStack(spacing: rowSpacing) {
             ForEach(works) { work in
                 Button {
-                    onSelect(work)
+                    onSelect(work.id)
                 } label: {
                     WorkRow(work: work, width: columnWidth)
                 }

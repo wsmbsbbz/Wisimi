@@ -8,7 +8,7 @@ struct WorkDetailView: View {
     let reservesMiniPlayerSpace: Bool
     let onSearch: (String, String) -> Void
     let onLoginRequired: () -> Void
-    let onOpenWork: (Int) -> Void
+    let onOpenWork: (WorkReference) -> Void
 
     @State private var downloads = DownloadStore.shared
     @State private var pageState: WorkDetailPageState
@@ -19,7 +19,7 @@ struct WorkDetailView: View {
 
     init(workID: Int, client: ASMRClient, auth: AuthSession, player: WorkAudioPlayer,
          reservesMiniPlayerSpace: Bool, onSearch: @escaping (String, String) -> Void,
-         onLoginRequired: @escaping () -> Void, onOpenWork: @escaping (Int) -> Void) {
+         onLoginRequired: @escaping () -> Void, onOpenWork: @escaping (WorkReference) -> Void) {
         self.workID = workID
         self.client = client
         self.auth = auth
@@ -75,7 +75,7 @@ struct WorkDetailView: View {
                         }
 
                         if similarWorks.shouldShowSection {
-                            SimilarWorksSection(state: similarWorks, onSelect: { onOpenWork($0.id) }, onReposition: {
+                            SimilarWorksSection(state: similarWorks, onSelect: onOpenWork, onReposition: {
                                 scrollPosition.scrollTo(id: "similar-works", anchor: .top)
                             })
                             .id("similar-works")

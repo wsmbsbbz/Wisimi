@@ -103,8 +103,10 @@ struct WorksListView: View {
                         .opacity(showsLocalLibrary ? 0 : 1)
                         .allowsHitTesting(!showsLocalLibrary)
                         .accessibilityHidden(showsLocalLibrary)
-                    LocalWorksView(library: source.library, refreshID: showsLocalLibrary ? localRevision : nil) { id in
-                        if showsLocalLibrary { path.append(.detail(.local(id))) }
+                    LocalWorksView(library: source.library, catalog: source.library,
+                                   refreshID: showsLocalLibrary ? localRevision : nil,
+                                   reservesMiniPlayerSpace: shouldShowMiniPlayer) { reference in
+                        path.append(.detail(reference))
                     }
                     .opacity(showsLocalLibrary ? 1 : 0)
                     .allowsHitTesting(showsLocalLibrary)
@@ -180,8 +182,8 @@ struct WorksListView: View {
                                     Task { await loadWorks(page: pageState.requestedPage) }
                                 }
                             }
-                            MasonryGrid(works: works) { work in
-                                path.append(.detail(.asmrOne(work.id)))
+                            MasonryGrid(works: works.map(\.card)) { reference in
+                                path.append(.detail(reference))
                             }
 
                             PaginationControls(
@@ -276,7 +278,7 @@ struct WorksListView: View {
                 reservesMiniPlayerSpace: shouldShowMiniPlayer,
                 onSearch: search,
                 onLoginRequired: { isLoginPresented = true },
-                onOpenWork: { path.append(.detail(.asmrOne($0))) }
+                onOpenWork: { path.append(.detail($0)) }
             )
         case .detail(.local(let id)):
             LocalWorkDetailView(id: id, source: source, player: player,

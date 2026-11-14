@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SimilarWorksSection: View {
     let state: SimilarWorksState
-    let onSelect: (WorkSummary) -> Void
+    let onSelect: (WorkReference) -> Void
     let onReposition: () -> Void
     @State private var requestTask: Task<Void, Never>?
 
@@ -28,7 +28,7 @@ struct SimilarWorksSection: View {
                 retryNotice
             }
 
-            MasonryGrid(works: state.displayedWorks, onSelect: onSelect)
+            MasonryGrid(works: state.displayedWorks.map(\.card), onSelect: onSelect)
 
             if state.isExpanded {
                 if state.page.works.isEmpty && !state.page.isLoading && state.page.errorMessage == nil {
