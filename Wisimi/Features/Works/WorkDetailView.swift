@@ -43,7 +43,7 @@ struct WorkDetailView: View {
             } else if let work = pageState.work {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        DetailHero(work: work, onSearch: onSearch)
+                        DetailHero(work: work.presentation, onSearch: onSearch)
 
                         ViewThatFits(in: .horizontal) {
                             HStack(alignment: .top, spacing: 10) {
@@ -59,7 +59,8 @@ struct WorkDetailView: View {
 
                         InfoCard {
                             TrackBrowserView(
-                                work: work,
+                                work: work.presentation,
+                                onlineWork: work,
                                 tracks: pageState.tracks,
                                 currentPath: $pageState.currentPath,
                                 isPathMenuExpanded: $pageState.isPathMenuExpanded,
@@ -169,26 +170,29 @@ struct WorkDetailView: View {
 }
 
 struct DetailHero: View {
-    let work: WorkDetail
-    let onSearch: (String, String) -> Void
+    let work: WorkPresentation
+    var onSearch: ((String, String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             GeometryReader { proxy in
                 CoverImage(
-                    url: work.mainCoverURL,
+                    url: work.coverURL,
                     cornerRadius: 18,
-                    size: CGSize(width: proxy.size.width, height: proxy.size.width * 3 / 4)
+                    size: CGSize(width: proxy.size.width, height: proxy.size.width * 3 / 4),
+                    placeholderWhenMissing: work.reference.localID != nil
                 )
                 .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
                 .overlay(alignment: .bottomLeading) {
-                    Text(work.rjCode)
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(.ultraThinMaterial, in: .capsule)
-                        .padding(10)
-                        .copyContextMenu(work.rjCode, label: "RJ 号")
+                    if let code = work.catalogCode {
+                        Text(code)
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(.ultraThinMaterial, in: .capsule)
+                            .padding(10)
+                            .copyContextMenu(code, label: work.reference.onlineID == nil ? "作品编号" : "RJ 号")
+                    }
                 }
             }
             .aspectRatio(4 / 3, contentMode: .fit)
@@ -203,43 +207,37 @@ struct DetailHero: View {
                     .textSelection(.enabled)
 
                 ChipFlowLayout(spacing: 6) {
-                    if let rateAverage = work.rateAverage, rateAverage > 0 {
-                        MetricPill(text: work.ratingText, systemImage: "star.fill", prominence: .strong)
+                    if let rating = work.rating, rating > 0 {
+                        MetricPill(text: String(format: "%.1f", rating), systemImage: "star.fill", prominence: .strong)
                     }
 
-                    MetricPill(text: work.durationText, systemImage: "clock", prominence: .strong)
-                    MetricPill(text: "\(work.dlCount)", systemImage: "cart", prominence: .strong)
+                    if work.duration != nil || work.reference.onlineID != nil {
+                        MetricPill(text: work.duration.formattedDuration, systemImage: "clock", prominence: .strong)
+                    }
+                    if let sales = work.sales {
+                        MetricPill(text: "\(sales)", systemImage: "cart", prominence: .strong)
+                    }
 
                     if work.hasSubtitle {
                         MetricPill(text: "字幕", systemImage: "captions.bubble", prominence: .strong)
                     }
 
-                    ForEach(work.vas) { actor in
-                        Button {
-                            onSearch("va", actor.name)
-                        } label: {
+                    ForEach(work.voiceActors) { actor in
+                        metadataChip(kind: "va", name: actor.name, label: "声优名称") {
                             VoiceActorChip(text: actor.name)
                         }
-                        .buttonStyle(.plain)
-                        .copyContextMenu(actor.name, label: "声优名称")
                     }
 
-                    Button {
-                        onSearch("circle", work.name)
-                    } label: {
-                        CircleChip(text: work.name)
+                    if let circle = work.circle {
+                        metadataChip(kind: "circle", name: circle, label: "社团名称") {
+                            CircleChip(text: circle)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .copyContextMenu(work.name, label: "社团名称")
 
                     ForEach(work.tags) { tag in
-                        Button {
-                            onSearch("tag", tag.name)
-                        } label: {
+                        metadataChip(kind: "tag", name: tag.name, label: "标签") {
                             TagChip(text: tag.name)
                         }
-                        .buttonStyle(.plain)
-                        .copyContextMenu(tag.name, label: "标签")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -254,5 +252,18 @@ struct DetailHero: View {
         }
         .clipShape(.rect(cornerRadius: 18))
         .accessibilityElement(children: .combine)
+    }
+
+    private func metadataChip<Content: View>(kind: String, name: String, label: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        Group {
+            if let onSearch {
+                Button { onSearch(kind, name) } label: { content() }
+                    .buttonStyle(.plain)
+            } else {
+                content()
+            }
+        }
+        .copyContextMenu(name, label: label)
     }
 }

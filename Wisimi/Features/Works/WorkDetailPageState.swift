@@ -19,12 +19,10 @@ final class WorkDetailPageState {
     private var workGeneration = UUID()
     private var markRevision = 0
     private var loadTask: Task<Void, Never>?
-    private let client: ASMRClient
-    private let cachedWork: @MainActor (Int) -> DownloadedWork?
+    private let source: OnlineWorkSource
 
     init(client: ASMRClient, cachedWork: @escaping @MainActor (Int) -> DownloadedWork? = { DownloadStore.shared.savedWork(id: $0) }) {
-        self.client = client
-        self.cachedWork = cachedWork
+        source = OnlineWorkSource(client: client, cachedWork: cachedWork)
     }
 
     func load(workID: Int, token: String?, force: Bool = false) async {
@@ -33,7 +31,7 @@ final class WorkDetailPageState {
             requestedToken = token
             workGeneration = UUID()
         }
-        let saved = cachedWork(workID)
+        let saved = source.cachedWork(workID)
         if work == nil, let saved { apply(work: saved.work, tracks: saved.tracks, workID: workID) }
         guard force || saved != nil || loadedWorkID != workID || work == nil else { return }
         loadTask?.cancel()
@@ -45,14 +43,12 @@ final class WorkDetailPageState {
         let task = Task {
             defer { if requestID == id { isLoading = false; loadTask = nil } }
             do {
-                async let detail = client.fetchWork(id: workID, token: token)
-                async let directory = client.fetchTracks(workID: workID)
-                let (work, tracks) = try await (detail, directory)
+                let snapshot = try await source.loadWork(workID, token: token)
                 guard requestID == id, !Task.isCancelled else { return }
                 let displayedWork: WorkDetail
                 if revision != markRevision, let current = self.work, current.id == workID { displayedWork = current }
-                else { displayedWork = work }
-                apply(work: displayedWork, tracks: tracks, workID: workID)
+                else { displayedWork = snapshot.work }
+                apply(work: displayedWork, tracks: snapshot.tracks, workID: workID)
             } catch {
                 guard requestID == id, !Task.isCancelled, !(error is CancellationError) else { return }
                 errorMessage = error.userFacingMessage
@@ -69,6 +65,7 @@ final class WorkDetailPageState {
         markMessage = nil
         defer { isUpdatingMark = false }
         do {
+            let client = source.client
             if let status { try await client.markWork(id: work.id, status: status, token: token) }
             else { try await client.unmarkWork(id: work.id, token: token) }
             let updated = try await client.fetchWork(id: work.id, token: token)

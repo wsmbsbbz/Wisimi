@@ -168,12 +168,12 @@ struct WorkDetail: Codable {
     }
 }
 
-struct NameItem: Codable, Identifiable {
+nonisolated struct NameItem: Codable, Identifiable, Sendable {
     let id: FlexibleID
     let name: String
 }
 
-struct TrackNode: Codable, Identifiable {
+nonisolated struct TrackNode: Codable, Identifiable, Sendable {
     let type: String
     let title: String
     let hash: String?
@@ -242,8 +242,10 @@ extension Array where Element == TrackNode {
     }
 }
 
-struct FlexibleID: Codable, Hashable {
+nonisolated struct FlexibleID: Codable, Hashable, Sendable {
     let value: String
+
+    init(_ value: String) { self.value = value }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()

@@ -192,8 +192,13 @@ struct ASMRClient {
         return try await fetch(components.url!)
     }
 
+    func fetchWorkWithTracks(id: Int, token: String? = nil) async throws -> (WorkDetail, [TrackNode]) {
+        async let detail = fetchWork(id: id, token: token)
+        async let tracks = fetchTracks(workID: id)
+        return try await (detail, tracks)
+    }
+
     func fetchText(_ url: URL) async throws -> String {
-        if url.isFileURL { return try String(contentsOf: url, encoding: .utf8) }
         let data = try await data(for: request(url: url))
         return String(decoding: data, as: UTF8.self)
     }

@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct TrackBrowserView: View {
-    let work: WorkDetail
+    let work: WorkPresentation
+    var onlineWork: WorkDetail? = nil
     let tracks: [TrackNode]
     @Binding var currentPath: [TrackNode]
     @Binding var isPathMenuExpanded: Bool
@@ -13,11 +14,13 @@ struct TrackBrowserView: View {
     @State private var submissionMessage: String?
 
     private var selectedFiles: [TrackNode] {
-        tracks.downloadableFiles.filter { selection.contains(DownloadStore.key(for: $0, workID: work.id)) }
+        guard let onlineWork else { return [] }
+        return tracks.downloadableFiles.filter { selection.contains(DownloadStore.key(for: $0, workID: onlineWork.id)) }
     }
 
     private func keys(for nodes: [TrackNode]) -> Set<String> {
-        Set(nodes.downloadableFiles.map { DownloadStore.key(for: $0, workID: work.id) })
+        guard let onlineWork else { return [] }
+        return Set(nodes.downloadableFiles.map { DownloadStore.key(for: $0, workID: onlineWork.id) })
     }
 
     private func toggleSelection(_ nodes: [TrackNode]) {
@@ -74,7 +77,7 @@ struct TrackBrowserView: View {
             if let submissionMessage {
                 Text(submissionMessage).font(.caption).foregroundStyle(.secondary)
             }
-            if let message = downloads.message {
+            if onlineWork != nil, let message = downloads.message {
                 Text(message).font(.caption).foregroundStyle(.red)
             }
 
@@ -106,7 +109,7 @@ struct TrackBrowserView: View {
                             }
                             TrackBrowserNode(
                                 item: item,
-                                workID: work.id,
+                                workID: onlineWork?.id,
                                 openFolder: openFolder,
                                 previewImage: { item in
                                     if isSelecting { toggleSelection([item.node]) }
@@ -126,7 +129,7 @@ struct TrackBrowserView: View {
         }
         .task {
             #if DEBUG
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "download-selection" {
+            if onlineWork != nil, ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "download-selection" {
                 isSelecting = true
                 selection = keys(for: currentItems)
             }
@@ -155,13 +158,15 @@ struct TrackBrowserView: View {
 
             Spacer()
 
-            Button(isSelecting ? "完成" : "选择") {
-                isSelecting.toggle()
-                if !isSelecting { selection.removeAll() }
-                submissionMessage = nil
+            if onlineWork != nil {
+                Button(isSelecting ? "完成" : "选择") {
+                    isSelecting.toggle()
+                    if !isSelecting { selection.removeAll() }
+                    submissionMessage = nil
+                }
+                .font(.subheadline)
+                .disabled(tracks.downloadableFiles.isEmpty)
             }
-            .font(.subheadline)
-            .disabled(tracks.downloadableFiles.isEmpty)
         }
     }
 
@@ -179,8 +184,9 @@ struct TrackBrowserView: View {
             Text("已选 \(selectedFiles.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: selectedFiles.reduce(0) { $0 + Int64($1.size ?? 0) }, countStyle: .file))\(selectedFiles.contains { $0.size == nil } ? "（部分大小未知）" : "")")
                 .font(.caption).foregroundStyle(.secondary)
             Button {
-                let files = DownloadSelection.includingSubtitles(selectedFiles, in: tracks, workID: work.id)
-                if downloads.enqueue(files, work: work, tracks: tracks) {
+                guard let onlineWork else { return }
+                let files = DownloadSelection.includingSubtitles(selectedFiles, in: tracks, workID: onlineWork.id)
+                if downloads.enqueue(files, work: onlineWork, tracks: tracks) {
                     submissionMessage = "已加入下载，匹配字幕会一并缓存。可在下载管理中查看进度。"
                     selection.removeAll()
                     isSelecting = false
@@ -232,7 +238,7 @@ struct TrackBrowserView: View {
     }
 
     private func previewImage(_ item: TrackDisplayItem) {
-        guard let url = downloads.localURL(for: item.node, workID: work.id) ?? item.node.imagePreviewURL else { return }
+        guard let url = WorkSource.resourceURL(for: item.node, in: work.reference, fallback: item.node.imagePreviewURL) else { return }
         imagePreview = TrackImagePreview(id: item.id, title: item.node.title, url: url)
     }
 
@@ -243,7 +249,7 @@ struct TrackBrowserView: View {
 
 private struct TrackBrowserNode: View {
     let item: TrackDisplayItem
-    let workID: Int
+    let workID: Int?
     let openFolder: (TrackNode) -> Void
     let previewImage: (TrackDisplayItem) -> Void
     let playMedia: (TrackNode) -> Void

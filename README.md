@@ -1,6 +1,6 @@
 # Wisimi
 
-Wisimi 是一个用 SwiftUI 实现的非官方 asmr.one iOS 客户端。
+Wisimi 是一个用 SwiftUI 实现的 iOS ASMR 播放器，支持 asmr.one 和从「文件」导入的本地作品。
 
 asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容基础上提供更贴近移动端和个人使用习惯的体验。
 
@@ -17,6 +17,7 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 文件多选与递归全选当前文件夹，批量下载音视频、匹配字幕、图片及其他目录文件
 - 下载管理：按作品展示封面、所选文件完成数量与汇总进度，支持全部/未完成/已下载筛选和页内展开；可管理单文件、整部作品及全部任务，删除前确认；目录直接标识已缓存文件
 - 从下载管理打开本地作品目录，断网可播放已缓存音视频并读取本地字幕、查看已缓存图片
+- 从「文件」导入自己的作品文件夹，在本地库搜索、浏览、播放和恢复进度，支持可选的作品元信息
 - 在线播放音频与 MP4 视频，同目录混合队列支持上一首、下一首、精确进度拖动、后台播放控制和播放进度恢复
 - MP4 播放器完整按比例显示视频，支持全屏观看及独立字幕入口；返回目录后可继续收听视频声音
 - 播放器区分准备与正在播放，支持音频失败后从当前位置重试
@@ -28,6 +29,28 @@ asmr.one 的 Web 版在移动端已经能用，但 Wisimi 希望在它的内容�
 - 登录 asmr.one 账号，保存 token 到 Keychain
 - 标记作品状态：想听、在听、听过、重听、搁置
 - 创建、编辑、删除播放列表，并把作品加入或移出播放列表
+
+## 导入本地作品
+
+打开首页「本地」并点击「导入作品」，选择一部作品的文件夹。确认后 Wisimi 会复制支持的音频（MP3、M4A、AAC、WAV、FLAC、AIFF、CAF）、MP4、VTT/LRC 和常见图片，保留相对目录。实际解码取决于 iOS 支持的编码。同一目录下的字幕按文件名匹配，例如 `01.mp3` 和 `01.vtt`。本地详情的「删除本地副本」只删除 Wisimi 中的副本。
+
+导入时可在作品根目录放置 UTF-8 的 `wisimi.json`。所有字段均可省略，`duration` 以秒为单位，`rating` 使用 0–5 分，`cover` 是作品文件夹内图片的相对路径。
+
+```json
+{
+  "title": "雨夜耳语",
+  "circle": "示例社团",
+  "duration": 1200,
+  "rating": 4.5,
+  "sales": 12,
+  "catalogCode": "ASMR-001",
+  "tags": ["雨声"],
+  "voiceActors": ["示例声优"],
+  "cover": "图片/封面.png"
+}
+```
+
+缺少或无法解析元信息时，作品仍可浏览和播放，标题使用文件夹名，默认封面读取根目录 `cover.jpg` 或 `cover.png`。字幕与旁白按实际文件工作，启用旁白后仍使用所选在线 TTS 服务或已缓存的合成音频。导入时读取元信息，更新源文件后可重新导入。
 
 ## Requirements
 
@@ -57,6 +80,8 @@ bash scripts/check-refactor.sh
 
 `check-refactor.sh` 使用本地音频样本、URLSession 测试响应和隔离的 Keychain 项验证旁白缓存与回退、列表请求、播放列表编辑、详情加载与标记竞态、配置归一化和凭据错误路径。测试不调用远程 TTS，不产生付费合成请求。使用 LLVM 统计重构的九个核心模块，分别强制行、函数与区域覆盖率不低于 80%；该统计不代表整个应用的 UI 覆盖率。
 
+`check-refactor.sh` 也验证本地作品导入、可选元信息、同名轨道、字幕路径、取消和删除。隔离 Debug 模拟器可用 `WISIMI_DEBUG_SCREEN=local-library` 打开本地库，用 `WISIMI_LOCAL_MEDIA_CHECKS` 指定模拟器容器内 `Tests/Fixtures/silence.mp3` 的副本绝对路径，运行本地 MP4/CAF、VTT/LRC、缓存旁白、恢复和删除自检。
+
 Debug 模拟器中设置 `WISIMI_PLAYBACK_CHECKS=1` 可运行本地音频播放与睡眠定时器集成自检；设置 `WISIMI_WORKS_CHECKS=1` 可运行列表竞态自检。设置 `WISIMI_VIDEO_CHECKS=1` 可运行本机生成的 H.264 + AAC MP4 集成自检（真实解码、混合队列、画面绑定、字幕跳转、重试及定时停止）。`WISIMI_DEBUG_SCREEN=video` 提供本地视频界面验证入口。`WISIMI_DEBUG_SCREEN=player` 或 `mini-player` 提供播放器预览，叠加 `WISIMI_SLEEP_TIMER=1` 显示活动定时器；`WISIMI_DEBUG_SCREEN=list-error` 显示刷新失败保留内容的场景。上述入口只存在于 Debug 构建。
 
 `check-downloads.sh` 使用本机 HTTP 服务验证嵌套目录、字幕附带、去重、响应与完整性校验、暂停继续、失败重试、持久化恢复及删除。Debug 模拟器中设置 `WISIMI_DOWNLOAD_PLAYBACK_CHECKS=1` 验证本地 MP4 真实解码与本地字幕；`WISIMI_DEBUG_SCREEN=downloads`、`download-detail`、`download-selection` 提供下载状态与多选布局验证入口。`downloads-many` 增加 80 个文件，`downloads-empty` 清空隔离模拟器测试下载并展示空态；`WISIMI_DEBUG_DOWNLOAD_EXPANDED=1` 自动展开作品，`WISIMI_DEBUG_DOWNLOAD_MINIPLAYER=1` 在下载页显示测试迷你播放器。上述下载布局入口应只在隔离模拟器使用。
@@ -71,7 +96,7 @@ MP4 的实际可播放性取决于 iOS 支持的编码和媒体服务器可用�
 
 ## Privacy and Data
 
-- Wisimi 会直接请求 asmr.one 相关接口，作品数据来自 asmr.one。
+- Wisimi 直接请求 asmr.one 接口获取在线作品。导入的作品文件和元信息保存在本机 Application Support，排除 iCloud 备份；启用旁白时，待合成的字幕文本会交给所选 TTS 服务。
 - 登录 asmr.one 后的 token 只保存在本机 Keychain 中，不会提交到仓库，也不会由 Wisimi 上传到其他服务。
 - 用户填写的 OpenRouter Token 使用 `AfterFirstUnlockThisDeviceOnly` 策略保存在本机 Keychain，不参与同步，也不会写入偏好设置、缓存名称或日志。
 - 设备首次解锁后，OpenRouter Token 可供锁屏后台旁白读取；已有 Token 在应用初始化时原位更新权限，读取错误不会当成未配置凭据。

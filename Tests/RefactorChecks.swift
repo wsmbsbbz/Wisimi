@@ -82,13 +82,84 @@ struct RefactorChecks {
         try await speechChecks()
         try await browserChecks()
         try await detailChecks()
+        try await localLibraryChecks()
         try await similarWorksChecks()
         try await playlistMembershipChecks()
         try await raceChecks()
         try await settingsChecks()
         try keychainChecks()
         try tokenChecks()
-        print("Refactor checks passed: TTS fallback/cache/cancellation, list routing, playlist edits, detail refresh, settings and Keychain")
+        print("Refactor checks passed: TTS, list routing, playlist edits, detail refresh, local library, settings and Keychain")
+    }
+
+    @MainActor static func localLibraryChecks() async throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? files.removeItem(at: root) }
+        let original = root.appendingPathComponent("本地作品")
+        let storage = root.appendingPathComponent("Library")
+        let library = LocalWorkLibrary(directory: storage, requiresSecurityScope: false)
+        let source = WorkSource(online: OnlineWorkSource(client: ASMRClient()), library: library)
+        for name in ["Track 2", "Track 10"] {
+            let folder = original.appendingPathComponent(name)
+            try files.createDirectory(at: folder, withIntermediateDirectories: true)
+            try files.copyItem(at: URL(fileURLWithPath: "Tests/Fixtures/silence.mp3"), to: folder.appendingPathComponent("01 #雨.mp3"))
+            try "[00:00.00]本地字幕".write(to: folder.appendingPathComponent("01 #雨.lrc"), atomically: true, encoding: .utf8)
+        }
+        let nestedCover = original.appendingPathComponent("Track 2/封面.png")
+        try Data([0]).write(to: nestedCover)
+        try files.createSymbolicLink(at: original.appendingPathComponent("ignored.mp3"),
+                                     withDestinationURL: original.appendingPathComponent("Track 2/01 #雨.mp3"))
+
+        let plan = try await library.inspect(original)
+        let plain = try await library.importWork(plan)
+        let loaded = try await source.loadWork(.local(plain.id))
+        assert(plan.title == "本地作品" && plan.bytes > 0)
+        assert(loaded.work.reference == .local(plain.id) && loaded.work.hasSubtitle && loaded.metadataWarning == nil)
+        assert(loaded.tracks.map(\.title) == ["Track 2", "Track 10"])
+        let firstFolder = loaded.tracks[0].children!
+        let firstTrack = firstFolder.playableTracks[0]
+        assert(firstTrack.id != loaded.tracks[1].children?.playableTracks[0].id)
+        assert(firstTrack.playbackURL?.isFileURL == true && files.fileExists(atPath: firstTrack.playbackURL!.path))
+        let subtitle = firstFolder.matchingSubtitle(for: firstTrack)!
+        let text = try await source.subtitleText(at: subtitle.downloadSourceURL!)
+        assert(text == "[00:00.00]本地字幕")
+
+        let metadataURL = original.appendingPathComponent("wisimi.json")
+        try Data(#"{"title":"注册标题","circle":"本地社团","duration":120,"rating":4.5,"sales":12,"catalogCode":"TEST-7","tags":["雨声","雨声"],"voiceActors":["测试声优"],"cover":"Track 2/封面.png"}"#.utf8).write(to: metadataURL)
+        let registered = try await library.importWork(library.inspect(original))
+        let reopened = LocalWorkLibrary(directory: storage, requiresSecurityScope: false)
+        let saved = try await reopened.loadWork(registered.id)
+        assert(saved.work.title == "注册标题" && saved.work.circle == "本地社团")
+        assert(saved.work.rating == 4.5 && saved.work.duration == 120 && saved.work.sales == 12 && saved.work.catalogCode == "TEST-7")
+        assert(saved.work.tags.map(\.name) == ["雨声"] && saved.work.voiceActors.map(\.name) == ["测试声优"])
+        assert(saved.work.coverURL?.lastPathComponent == "封面.png" && files.fileExists(atPath: saved.work.coverURL!.path))
+
+        try Data(#"{"cover":"../外部.png"}"#.utf8).write(to: metadataURL)
+        let unsafe = try await library.importWork(library.inspect(original))
+        let unsafeWork = try await library.loadWork(unsafe.id)
+        assert(unsafeWork.work.coverURL == nil && unsafeWork.metadataWarning != nil)
+        try Data("{".utf8).write(to: metadataURL)
+        let malformed = try await library.importWork(library.inspect(original))
+        assert(malformed.title == "本地作品" && malformed.metadataWarning != nil && malformed.hasSubtitle)
+
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await library.importWork(plan)
+        }
+        do { _ = try await cancelled.value; assertionFailure("Cancelled import published a work") }
+        catch is CancellationError {}
+
+        let empty = root.appendingPathComponent("empty")
+        try files.createDirectory(at: empty, withIntermediateDirectories: true)
+        let failed = try? await library.inspect(empty)
+        assert(failed == nil)
+        try await library.remove(plain.id)
+        let remaining = try await reopened.list()
+        assert(Set(remaining.map(\.id)) == [registered.id, unsafe.id, malformed.id])
+        assert(files.fileExists(atPath: nestedCover.path) && files.fileExists(atPath: metadataURL.path))
+        let storedDirectories = try files.contentsOfDirectory(atPath: storage.path)
+        assert(storedDirectories.allSatisfy { UUID(uuidString: $0) != nil })
     }
 
     @MainActor static func speechChecks() async throws {

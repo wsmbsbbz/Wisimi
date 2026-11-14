@@ -1,7 +1,7 @@
 import Foundation
 
 extension Double {
-    var formattedDuration: String {
+    nonisolated var formattedDuration: String {
         guard isFinite else { return "0m 0s" }
         let totalSeconds = Int(rounded())
         let hours = totalSeconds / 3600
@@ -15,7 +15,7 @@ extension Double {
 }
 
 extension Optional where Wrapped == Double {
-    var formattedDuration: String {
+    nonisolated var formattedDuration: String {
         self?.formattedDuration ?? "-"
     }
 }

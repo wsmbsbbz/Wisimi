@@ -10,7 +10,7 @@ import UIKit
 final class WorkAudioPlayer: ObservableObject {
     @Published private(set) var queue: [TrackNode] = []
     @Published private(set) var currentIndex = 0
-    @Published private(set) var workID: Int?
+    @Published private(set) var workReference: WorkReference?
     @Published private(set) var workTitle = ""
     @Published private(set) var circleName = ""
     @Published private(set) var coverURL: URL?
@@ -24,7 +24,7 @@ final class WorkAudioPlayer: ObservableObject {
     @Published private(set) var currentSubtitleIndex: Int?
     @Published private(set) var narrationState: NarrationState = .off
 
-    private let client: ASMRClient
+    private let source: WorkSource
     private let ttsSettings: TTSMixSettings
     private let synthesis = TTSCoordinator()
     private let player = AVPlayer()
@@ -40,6 +40,7 @@ final class WorkAudioPlayer: ObservableObject {
     private var playerStatusCancellable: AnyCancellable?
     private var settingsCancellables: Set<AnyCancellable> = []
     private var loadTask: Task<Void, Never>?
+    private var durationLoadTask: Task<Void, Never>?
     private var narrationTask: Task<Void, Never>?
     private var narrationCutoffTask: Task<Void, Never>?
     private var prefetchTasks: [SubtitleLine.ID: Task<Void, Never>] = [:]
@@ -50,8 +51,8 @@ final class WorkAudioPlayer: ObservableObject {
     private var lastSavedPosition: TimeInterval = -1
     private var lastNarrationID: String?
 
-    init(client: ASMRClient, ttsSettings: TTSMixSettings) {
-        self.client = client
+    init(source: WorkSource, ttsSettings: TTSMixSettings) {
+        self.source = source
         self.ttsSettings = ttsSettings
         player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         configureAudioSession()
@@ -117,18 +118,48 @@ final class WorkAudioPlayer: ObservableObject {
         return subtitles[currentSubtitleIndex]
     }
 
-    func play(queue: [TrackNode], start track: TrackNode, siblings: [TrackNode], work: WorkDetail) {
+    func play(queue: [TrackNode], start track: TrackNode, siblings: [TrackNode], work: WorkPresentation) {
         guard let index = queue.firstIndex(where: { $0.id == track.id }), queue[index].playbackURL != nil else { return }
         if sleepTimer == .endOfTrack { setSleepTimer(.off) }
         self.queue = queue
         self.siblings = siblings
         currentIndex = index
-        workID = work.id
+        workReference = work.reference
         workTitle = work.title
-        circleName = work.name
-        coverURL = work.mainCoverURL
+        circleName = work.circle ?? ""
+        coverURL = work.coverURL
         resetOpenRouterSession()
         loadCurrent(siblings: siblings, autoPlay: true)
+    }
+
+    func removeLocalWorkFromPlayback(_ id: UUID) {
+        if workReference == .local(id) {
+            pauseCurrent()
+            setSleepTimer(.off)
+            loadTask?.cancel()
+            durationLoadTask?.cancel()
+            player.replaceCurrentItem(with: nil)
+            queue = []
+            siblings = []
+            workReference = nil
+            workTitle = ""
+            circleName = ""
+            coverURL = nil
+            position = 0
+            duration = 0
+            subtitles = []
+            currentSubtitleIndex = nil
+            playbackError = nil
+            #if os(iOS)
+            artworkTask?.cancel()
+            nowPlayingArtworkURL = nil
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            #endif
+        }
+        if let data = UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey),
+           (try? JSONDecoder().decode(PlaybackSnapshot.self, from: data))?.localWorkID == id {
+            UserDefaults.standard.removeObject(forKey: PlaybackSnapshot.storageKey)
+        }
     }
 
     func togglePlayback() {
@@ -174,7 +205,9 @@ final class WorkAudioPlayer: ObservableObject {
 
     private func loadCurrent(siblings: [TrackNode], autoPlay: Bool, resumePosition: TimeInterval = 0) {
         loadTask?.cancel()
-        guard let track = currentTrack, let url = workID.flatMap({ DownloadStore.shared.localURL(for: track, workID: $0) }) ?? track.playbackURL else { return }
+        durationLoadTask?.cancel()
+        guard let track = currentTrack,
+              let url = WorkSource.resourceURL(for: track, in: workReference, fallback: track.playbackURL) else { return }
 
         endObserver.map(NotificationCenter.default.removeObserver)
         failureObserver.map(NotificationCenter.default.removeObserver)
@@ -189,6 +222,16 @@ final class WorkAudioPlayer: ObservableObject {
         narrationState = ttsSettings.isEnabled ? .enabled : .off
         position = max(0, min(resumePosition, track.duration ?? resumePosition))
         duration = track.duration ?? 0
+        if url.isFileURL, duration == 0 {
+            // A restored item stays paused, so its playback clock may never publish a tick.
+            durationLoadTask = Task { [weak self] in
+                guard let seconds = try? await item.asset.load(.duration).seconds,
+                      seconds.isFinite, seconds > 0, !Task.isCancelled,
+                      let self, self.player.currentItem === item, self.duration == 0 else { return }
+                self.duration = seconds
+                self.updateNowPlaying()
+            }
+        }
         subtitles = []
         currentSubtitleIndex = nil
         player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -223,10 +266,10 @@ final class WorkAudioPlayer: ObservableObject {
             }
         }
 
-        loadTask = Task { [client] in
-            let subtitle = siblings.matchingSubtitle(for: track)
-            let local = subtitle.flatMap { subtitle in self.workID.flatMap { DownloadStore.shared.localURL(for: subtitle, workID: $0) } }
-            guard let url = local ?? subtitle?.downloadSourceURL, let content = try? await client.fetchText(url), !Task.isCancelled else { return }
+        loadTask = Task {
+            guard let subtitle = siblings.matchingSubtitle(for: track),
+                  let url = WorkSource.resourceURL(for: subtitle, in: workReference, fallback: subtitle.downloadSourceURL),
+                  let content = try? await source.subtitleText(at: url), !Task.isCancelled else { return }
             let lines = Self.parseSubtitles(content)
             await MainActor.run {
                 guard self.currentTrack?.id == track.id else { return }
@@ -278,13 +321,87 @@ final class WorkAudioPlayer: ObservableObject {
     }
 
     #if DEBUG
+    func runLocalMediaChecks(mp3: URL) async throws {
+        let files = FileManager.default
+        let movie = try await DebugVideoFixture.make()
+        let root = movie.deletingLastPathComponent()
+        let input = root.appendingPathComponent("无元信息作品/音轨", isDirectory: true)
+        let library = LocalWorkLibrary(directory: root.appendingPathComponent("Library"), requiresSecurityScope: false)
+        let testSource = WorkSource(online: source.online, library: library)
+        let saved = UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey)
+        let settingsSuite = "Wisimi.local-check.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: settingsSuite)!
+        let settings = TTSMixSettings(defaults: defaults)
+        let text = "本地旁白自检 \(UUID().uuidString)"
+        let cache = TTSCache.url(for: settings.synthesisRequest(text: text))
+        defer {
+            UserDefaults.standard.set(saved, forKey: PlaybackSnapshot.storageKey)
+            defaults.removePersistentDomain(forName: settingsSuite)
+            try? files.removeItem(at: cache)
+            try? files.removeItem(at: root)
+        }
+        UserDefaults.standard.removeObject(forKey: PlaybackSnapshot.storageKey)
+        try files.createDirectory(at: input, withIntermediateDirectories: true)
+        try files.copyItem(at: movie, to: input.appendingPathComponent("01.mp4"))
+        try files.copyItem(at: root.appendingPathComponent("sound.caf"), to: input.appendingPathComponent("02.caf"))
+        try "WEBVTT\n\n00:00.000 --> 00:08.000\n\(text)\n".write(to: input.appendingPathComponent("01.vtt"), atomically: true, encoding: .utf8)
+        try "[00:00.00]\(text)".write(to: input.appendingPathComponent("02.lrc"), atomically: true, encoding: .utf8)
+        try files.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try files.copyItem(at: mp3, to: cache)
+        guard TTSCache.containsValidAudio(at: cache) else { throw URLError(.cannotDecodeContentData) }
+
+        let original = input.deletingLastPathComponent()
+        let plan = try await library.inspect(original)
+        let entry = try await library.importWork(plan)
+        let loaded = try await testSource.loadWork(.local(entry.id))
+        let siblings = loaded.tracks[0].children!
+        let tracks = siblings.playableTracks
+        assert(entry.title == "无元信息作品" && tracks.count == 2)
+
+        settings.isEnabled = true
+        let test = WorkAudioPlayer(source: testSource, ttsSettings: settings)
+        test.play(queue: tracks, start: tracks[0], siblings: siblings, work: loaded.work)
+        for _ in 0..<100 {
+            if test.playbackState == .playing, test.narrationPlayer.currentItem != nil { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        assert(test.playbackState == .playing && test.playbackError == nil)
+        assert(test.subtitles.first?.text == text && test.currentTrack?.isVideo == true)
+        assert((test.narrationPlayer.currentItem?.asset as? AVURLAsset)?.url == cache)
+        test.next()
+        for _ in 0..<100 {
+            if test.playbackState == .playing, test.duration > 4, test.subtitles.first?.text == text { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        assert(test.playbackState == .playing && test.currentTrack?.isAudio == true && test.subtitles.first?.text == text)
+        test.pauseCurrent()
+        settings.isEnabled = false
+        test.seek(to: 3)
+
+        let restored = WorkAudioPlayer(source: testSource, ttsSettings: settings)
+        for _ in 0..<100 {
+            if restored.duration > 4, abs(restored.player.currentTime().seconds - 3) < 0.1 { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        assert(restored.workReference == .local(entry.id) && restored.currentTrack?.id == tracks[1].id)
+        assert(abs(restored.player.currentTime().seconds - 3) < 0.1 && restored.playbackState == .paused)
+        assert(restored.duration > 4, "Paused restore must publish the actual duration without starting playback")
+        restored.seek(to: 4)
+        assert(restored.position == 4 && restored.playbackState == .paused)
+        try await library.remove(entry.id)
+        restored.removeLocalWorkFromPlayback(entry.id)
+        assert(restored.currentTrack == nil && UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey) == nil)
+        assert(files.fileExists(atPath: input.appendingPathComponent("01.mp4").path))
+        NSLog("Local media checks passed: MP4, CAF, VTT/LRC, cached narration, resume, delete and original preservation")
+    }
+
     func runDownloadedMediaCheck() async throws {
         try await DownloadStore.shared.prepareDebugDownloads()
         let saved = DownloadStore.shared.savedWork(id: 99999999)!
         let video = saved.tracks[0]
         let localURL = DownloadStore.shared.localURL(for: video, workID: saved.id)!
         ttsSettings.isEnabled = false
-        play(queue: saved.tracks.playableTracks, start: video, siblings: saved.tracks, work: saved.work)
+        play(queue: saved.tracks.playableTracks, start: video, siblings: saved.tracks, work: saved.work.presentation)
         for _ in 0..<200 {
             if player.currentItem?.status == .readyToPlay && !subtitles.isEmpty { break }
             try await Task.sleep(for: .milliseconds(50))
@@ -299,16 +416,17 @@ final class WorkAudioPlayer: ObservableObject {
     #endif
 
     private func savePlayback(force: Bool = false) {
-        guard let workID, let currentTrack else { return }
+        guard let workReference, let currentTrack else { return }
         guard force || abs(position - lastSavedPosition) >= 5 || lastSavedPosition < 0 else { return }
         lastSavedPosition = position
         let snapshot = PlaybackSnapshot(
-            workID: workID,
+            workID: workReference.onlineID,
+            localWorkID: workReference.localID,
             trackID: currentTrack.id,
             position: position,
             workTitle: workTitle,
             circleName: circleName,
-            coverURL: coverURL?.absoluteString
+            coverURL: workReference.onlineID == nil ? nil : coverURL?.absoluteString
         )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         UserDefaults.standard.set(data, forKey: PlaybackSnapshot.storageKey)
@@ -317,28 +435,19 @@ final class WorkAudioPlayer: ObservableObject {
     private func restorePlayback() async {
         guard let data = UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey),
               let snapshot = try? JSONDecoder().decode(PlaybackSnapshot.self, from: data),
-              currentTrack == nil else { return }
-        let saved = DownloadStore.shared.savedWork(id: snapshot.workID)
-        let detail: WorkDetail
-        let tracks: [TrackNode]
-        if let saved {
-            detail = saved.work
-            tracks = saved.tracks
-        } else {
-            guard let onlineDetail = try? await client.fetchWork(id: snapshot.workID),
-                  let onlineTracks = try? await client.fetchTracks(workID: snapshot.workID) else { return }
-            detail = onlineDetail
-            tracks = onlineTracks
-        }
+              let reference = snapshot.reference, currentTrack == nil,
+              let loaded = try? await source.loadWork(reference) else { return }
         guard currentTrack == nil,
-              let context = Self.playbackContext(for: snapshot.trackID, in: tracks) else { return }
+              UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey) == data,
+              let context = Self.playbackContext(for: snapshot.trackID, in: loaded.tracks) else { return }
+        let detail = loaded.work
         queue = context.queue
         siblings = context.siblings
         currentIndex = context.index
-        workID = detail.id
+        workReference = detail.reference
         workTitle = detail.title
-        circleName = detail.name
-        coverURL = detail.mainCoverURL ?? snapshot.coverURL.flatMap(URL.init(string:))
+        circleName = detail.circle ?? ""
+        coverURL = detail.coverURL ?? (reference.onlineID == nil ? nil : snapshot.coverURL.flatMap(URL.init(string:)))
         loadCurrent(siblings: context.siblings, autoPlay: false, resumePosition: snapshot.position)
     }
 
@@ -626,6 +735,8 @@ final class WorkAudioPlayer: ObservableObject {
         info[MPNowPlayingInfoPropertyPlaybackRate] = playbackState == .playing ? 1 : 0
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
+        } else {
+            info.removeValue(forKey: MPMediaItemPropertyPlaybackDuration)
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         loadArtworkIfNeeded()
@@ -637,11 +748,14 @@ final class WorkAudioPlayer: ObservableObject {
         guard nowPlayingArtworkURL != coverURL else { return }
         nowPlayingArtworkURL = coverURL
         artworkTask?.cancel()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo?.removeValue(forKey: MPMediaItemPropertyArtwork)
         guard let coverURL else { return }
 
         artworkTask = Task { [coverURL] in
-            guard let (data, _) = try? await URLSession.shared.data(from: coverURL),
-                  !Task.isCancelled,
+            let data: Data?
+            if coverURL.isFileURL { data = try? Data(contentsOf: coverURL) }
+            else { data = try? await URLSession.shared.data(from: coverURL).0 }
+            guard let data, !Task.isCancelled,
                   let image = UIImage(data: data) else { return }
 
             await MainActor.run {
@@ -992,12 +1106,18 @@ final class WorkAudioPlayer: ObservableObject {
 private struct PlaybackSnapshot: Codable {
     static let storageKey = "WorkAudioPlayer.playbackSnapshot"
 
-    let workID: Int
+    let workID: Int?
+    let localWorkID: UUID?
     let trackID: String
     let position: TimeInterval
     let workTitle: String
     let circleName: String
     let coverURL: String?
+
+    var reference: WorkReference? {
+        if let localWorkID { return .local(localWorkID) }
+        return workID.map(WorkReference.asmrOne)
+    }
 }
 
 enum NarrationState: Equatable {

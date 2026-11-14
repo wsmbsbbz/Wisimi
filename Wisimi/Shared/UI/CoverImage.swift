@@ -10,32 +10,53 @@ struct CoverImage: View {
     let cornerRadius: CGFloat
     var size: CGSize? = nil
     var contentMode: ContentMode = .fill
+    var placeholderWhenMissing = false
+    @State private var localImage: UIImage?
+    @State private var loadedURL: URL?
 
     var body: some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                if contentMode == .fill {
-                    image
-                        .resizable()
-                        .scaledToFill()
+        Group {
+            if let url, url.isFileURL {
+                if loadedURL != url {
+                    ProgressView()
+                } else if let localImage {
+                    artwork(Image(uiImage: localImage))
                 } else {
-                    image
-                        .resizable()
-                        .scaledToFit()
+                    placeholder
                 }
-            case .failure:
-                Image(systemName: "photo")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-            default:
-                ProgressView()
+            } else if url == nil, placeholderWhenMissing {
+                placeholder
+            } else {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image): artwork(image)
+                    case .failure: placeholder
+                    default: ProgressView()
+                    }
+                }
             }
+        }
+        .task(id: url) {
+            guard let url, url.isFileURL else { return }
+            let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
+            guard !Task.isCancelled else { return }
+            localImage = data.flatMap { UIImage(data: $0) }
+            loadedURL = url
         }
         .frame(width: size?.width, height: size?.height)
         .frame(maxWidth: size == nil ? .infinity : nil)
         .background(.quaternary)
         .clipShape(.rect(cornerRadius: cornerRadius))
         .clipped()
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "photo")
+            .font(.largeTitle)
+            .foregroundStyle(.secondary)
+    }
+
+    private func artwork(_ image: Image) -> some View {
+        image.resizable().aspectRatio(contentMode: contentMode == .fill ? .fill : .fit)
     }
 }

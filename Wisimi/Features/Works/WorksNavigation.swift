@@ -66,12 +66,27 @@ enum WorksFilterContextSelfCheck {
 }
 
 
+enum WorkReference: Hashable, Sendable {
+    case asmrOne(Int)
+    case local(UUID)
+
+    var onlineID: Int? {
+        if case .asmrOne(let id) = self { return id }
+        return nil
+    }
+
+    var localID: UUID? {
+        if case .local(let id) = self { return id }
+        return nil
+    }
+}
+
 enum WorksRoute: Hashable {
-    case detail(Int)
+    case detail(WorkReference)
     case downloads
     case player
 
-    static func replacingPlayer(withDetail workID: Int, in path: [Self]) -> [Self] {
+    static func replacingPlayer(withDetail workID: WorkReference, in path: [Self]) -> [Self] {
         guard path.last == .player else { return path }
         let previousPath = path.dropLast()
         return previousPath.last == .detail(workID) ? Array(previousPath) : previousPath + [.detail(workID)]
@@ -80,8 +95,10 @@ enum WorksRoute: Hashable {
 
 enum WorksNavigationSelfCheck {
     static func run() {
-        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.player]) == [.detail(1)])
-        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.detail(1), .player]) == [.detail(1)])
-        assert(WorksRoute.replacingPlayer(withDetail: 1, in: [.detail(2), .player]) == [.detail(2), .detail(1)])
+        let online = WorkReference.asmrOne(1)
+        let local = WorkReference.local(UUID())
+        assert(WorksRoute.replacingPlayer(withDetail: online, in: [.player]) == [.detail(online)])
+        assert(WorksRoute.replacingPlayer(withDetail: online, in: [.detail(online), .player]) == [.detail(online)])
+        assert(WorksRoute.replacingPlayer(withDetail: local, in: [.detail(online), .player]) == [.detail(online), .detail(local)])
     }
 }

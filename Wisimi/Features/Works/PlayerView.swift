@@ -234,7 +234,8 @@ private struct PlayerCoverContent: View {
                         isShowingSubtitles = true
                     }
                 } label: {
-                    CoverImage(url: player.coverURL, cornerRadius: 20, size: coverSize)
+                    CoverImage(url: player.coverURL, cornerRadius: 20, size: coverSize,
+                               placeholderWhenMissing: player.workReference?.localID != nil)
                         .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
                 }
                 .buttonStyle(.plain)

@@ -3,11 +3,14 @@ import UIKit
 
 struct WorksListView: View {
     private let client: ASMRClient
+    private let source: WorkSource
     @StateObject private var player: WorkAudioPlayer
     @StateObject private var auth: AuthSession
     @StateObject private var ttsSettings: TTSMixSettings
     @State private var path: [WorksRoute] = []
     @State private var browser: WorksBrowserState
+    @State private var showsLocalLibrary = false
+    @State private var localRevision = 0
     private var pageState: WorksPageState { browser.page }
 
     private var works: [WorkSummary] { pageState.works }
@@ -35,15 +38,17 @@ struct WorksListView: View {
         #endif
         let ttsSettings = TTSMixSettings()
         self.client = client
+        let source = WorkSource(online: OnlineWorkSource(client: client), library: .shared)
+        self.source = source
         _browser = State(initialValue: WorksBrowserState(client: client, catalog: PlaylistCatalog(client: client)))
         _ttsSettings = StateObject(wrappedValue: ttsSettings)
-        let player = WorkAudioPlayer(client: client, ttsSettings: ttsSettings)
+        let player = WorkAudioPlayer(source: source, ttsSettings: ttsSettings)
         _player = StateObject(wrappedValue: player)
         _auth = StateObject(wrappedValue: AuthSession(client: client))
         #if DEBUG
         let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
         if debugScreen?.hasPrefix("similar") == true {
-            _path = State(initialValue: [.detail(DebugSimilarWorksFixture.workID)])
+            _path = State(initialValue: [.detail(.asmrOne(DebugSimilarWorksFixture.workID))])
             if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SIMILAR_MINIPLAYER"] == "1" {
                 try? player.prepareDebugPlayback()
             }
@@ -55,7 +60,8 @@ struct WorksListView: View {
                 try? player.prepareDebugPlayback()
             }
         }
-        if debugScreen == "download-detail" || debugScreen == "download-selection" { _path = State(initialValue: [.detail(99999999)]) }
+        if debugScreen == "download-detail" || debugScreen == "download-selection" { _path = State(initialValue: [.detail(.asmrOne(99999999))]) }
+        _showsLocalLibrary = State(initialValue: debugScreen == "local-library")
         if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" || debugScreen == "narration" {
             try? player.prepareDebugPlayback()
             if debugScreen == "narration" { try? player.prepareDebugNarrationPreview() }
@@ -84,162 +90,30 @@ struct WorksListView: View {
 
     private var browserContent: some View {
         NavigationStack(path: $path) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Color.clear
-                        .frame(height: 0)
-                        .id("top")
-
-                    VStack(spacing: 18) {
-                        WorksSearchHeader(
-                            searchText: $searchText,
-                            activeSearchText: browser.keyword,
-                            selectedMode: browser.mode,
-                            filter: browser.filter,
-                            reviewFilter: browser.reviewFilter,
-                            selectedPlaylist: catalog.selectedPlaylist,
-                            isSearchFocused: $isSearchFocused,
-                            onSearch: runSearch,
-                            onClearSearch: clearSearch,
-                            onModeSelected: selectMode,
-                            onFilter: { isFilterPresented = true }
-                        )
-
-                        if isLoading && works.isEmpty {
-                            ProgressView("加载作品中...")
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 40)
-                        } else if let errorMessage, works.isEmpty {
-                            RetryView(message: errorMessage) {
-                                await loadWorks(page: pageState.requestedPage)
-                            }
-                        } else if works.isEmpty {
-                            EmptyStateView {
-                                await loadWorks(page: 1)
-                            }
-                        } else {
-                            VStack(spacing: 18) {
-                                if let errorMessage {
-                                    InlineRetryView(message: errorMessage) {
-                                        Task { await loadWorks(page: pageState.requestedPage) }
-                                    }
-                                }
-                                MasonryGrid(works: works) { work in
-                                    path.append(.detail(work.id))
-                                }
-
-                                PaginationControls(
-                                    currentPage: currentPage,
-                                    totalPages: pagination?.totalPages,
-                                    isLoading: isLoading
-                                ) { page in
-                                    Task {
-                                        await loadWorks(page: page)
-                                        withAnimation {
-                                            proxy.scrollTo("top", anchor: .top)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if shouldShowMiniPlayer {
-                            Color.clear.frame(height: miniPlayerAvoidanceHeight)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+            VStack(spacing: 0) {
+                Picker("作品来源", selection: $showsLocalLibrary) {
+                    Text("在线").tag(false)
+                    Text("本地").tag(true)
                 }
-                .background(.background)
-                .refreshable {
-                    await loadWorks(page: 1)
-                    withAnimation {
-                        proxy.scrollTo("top", anchor: .top)
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+
+                ZStack {
+                    onlineBrowser
+                        .opacity(showsLocalLibrary ? 0 : 1)
+                        .allowsHitTesting(!showsLocalLibrary)
+                        .accessibilityHidden(showsLocalLibrary)
+                    LocalWorksView(library: source.library, refreshID: showsLocalLibrary ? localRevision : nil) { id in
+                        if showsLocalLibrary { path.append(.detail(.local(id))) }
                     }
+                    .opacity(showsLocalLibrary ? 1 : 0)
+                    .allowsHitTesting(showsLocalLibrary)
+                    .accessibilityHidden(!showsLocalLibrary)
                 }
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        if auth.isLoggedIn {
-                            Button("退出登录", role: .destructive) {
-                                auth.logout()
-                                if browser.mode.requiresLogin {
-                                    browser.mode = .latest
-                                    Task { await reloadFromFirstPage() }
-                                }
-                            }
-                        } else {
-                            Button {
-                                isLoginPresented = true
-                            } label: {
-                                Label("登录", systemImage: "person.crop.circle")
-                            }
-                        }
-
-                        Button {
-                            isNarrationSettingsPresented = true
-                        } label: {
-                            Label("混音", systemImage: "speaker.wave.2")
-                        }
-                    } label: {
-                        Label(auth.username ?? "菜单", systemImage: auth.isLoggedIn ? "person.crop.circle.fill" : "ellipsis.circle")
-                    }
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        path.append(.downloads)
-                    } label: {
-                        Label("下载管理", systemImage: "arrow.down.circle")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if isLoading && !works.isEmpty {
-                        ProgressView()
-                    }
-                }
-            }
-            .navigationDestination(for: WorksRoute.self) { route in
-                switch route {
-                case .detail(let workID):
-                    WorkDetailView(
-                        workID: workID,
-                        client: client,
-                        auth: auth,
-                        player: player,
-                        reservesMiniPlayerSpace: shouldShowMiniPlayer,
-                        onSearch: search,
-                        onLoginRequired: { isLoginPresented = true },
-                        onOpenWork: { path.append(.detail($0)) }
-                    )
-                case .downloads:
-                    DownloadsView { path.append(.detail($0)) }
-                case .player:
-                    PlayerView(player: player, openWorkDetail: openPlayingWorkDetail)
-                }
-            }
-            .sheet(isPresented: $isFilterPresented) {
-                WorksFilterSheet(
-                    context: browser.filterContext,
-                    filter: browser.filter,
-                    reviewFilter: browser.reviewFilter,
-                    catalog: catalog,
-                    token: auth.token
-                ) { newFilter in
-                    browser.filter = newFilter
-                    Task { await reloadFromFirstPage() }
-                } onApplyReviewFilter: { newFilter in
-                    browser.reviewFilter = newFilter
-                    Task { await reloadFromFirstPage() }
-                } onApplyPlaylist: { playlistID in
-                    catalog.selectedID = playlistID
-                    Task { await reloadFromFirstPage() }
-                } onCatalogChanged: {
-                    Task { await reloadFromFirstPage() }
-                }
-                .presentationDetents([.medium, .large])
-            }
+            .toolbar { browserToolbar }
+            .navigationDestination(for: WorksRoute.self, destination: destination)
+            .sheet(isPresented: $isFilterPresented) { filterSheet }
             .sheet(isPresented: $isLoginPresented) {
                 LoginSheet(auth: auth) {
                     if let mode = pendingMode {
@@ -247,7 +121,7 @@ struct WorksListView: View {
                         selectMode(mode)
                     }
                 }
-                    .presentationDetents([.medium])
+                .presentationDetents([.medium])
             }
             .sheet(isPresented: $isNarrationSettingsPresented) {
                 TTSMixSettingsSheet(settings: ttsSettings)
@@ -262,53 +136,232 @@ struct WorksListView: View {
             }
         }
         .onChange(of: auth.token) { catalog.reset() }
-        .task {
-            #if DEBUG
-            if ProcessInfo.processInfo.environment["WISIMI_NARRATION_CHECKS"] == "1" {
-                do { try await player.runNarrationChecks() }
-                catch { assertionFailure("Narration checks failed: \(error)") }
-                return
-            }
-            if ProcessInfo.processInfo.environment["WISIMI_DOWNLOAD_PLAYBACK_CHECKS"] == "1" {
-                do { try await player.runDownloadedMediaCheck() }
-                catch { assertionFailure("Downloaded media check failed: \(error)") }
-                return
-            }
-            if let screen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"], screen.hasPrefix("download") {
-                do { try await DownloadStore.shared.prepareDebugDownloads() }
-                catch { DownloadStore.shared.message = error.localizedDescription }
-                return
-            }
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "list-error" {
-                let json = #"{"works":[{"id":1,"title":"晚安 · 轻声陪伴与耳边细语","name":"Wisimi","has_subtitle":true,"tags":[],"vas":[]}],"pagination":{"currentPage":1,"pageSize":12,"totalCount":36}}"#
-                await pageState.load(page: 1) {
-                    try JSONDecoder().decode(WorksResponse.self, from: Data(json.utf8))
+        .task { await loadInitialContent() }
+    }
+
+    private var onlineBrowser: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear
+                    .frame(height: 0)
+                    .id("top")
+
+                VStack(spacing: 18) {
+                    WorksSearchHeader(
+                        searchText: $searchText,
+                        activeSearchText: browser.keyword,
+                        selectedMode: browser.mode,
+                        filter: browser.filter,
+                        reviewFilter: browser.reviewFilter,
+                        selectedPlaylist: catalog.selectedPlaylist,
+                        isSearchFocused: $isSearchFocused,
+                        onSearch: runSearch,
+                        onClearSearch: clearSearch,
+                        onModeSelected: selectMode,
+                        onFilter: { isFilterPresented = true }
+                    )
+
+                    if isLoading && works.isEmpty {
+                        ProgressView("加载作品中...")
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                    } else if let errorMessage, works.isEmpty {
+                        RetryView(message: errorMessage) {
+                            await loadWorks(page: pageState.requestedPage)
+                        }
+                    } else if works.isEmpty {
+                        EmptyStateView {
+                            await loadWorks(page: 1)
+                        }
+                    } else {
+                        VStack(spacing: 18) {
+                            if let errorMessage {
+                                InlineRetryView(message: errorMessage) {
+                                    Task { await loadWorks(page: pageState.requestedPage) }
+                                }
+                            }
+                            MasonryGrid(works: works) { work in
+                                path.append(.detail(.asmrOne(work.id)))
+                            }
+
+                            PaginationControls(
+                                currentPage: currentPage,
+                                totalPages: pagination?.totalPages,
+                                isLoading: isLoading
+                            ) { page in
+                                Task {
+                                    await loadWorks(page: page)
+                                    withAnimation {
+                                        proxy.scrollTo("top", anchor: .top)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if shouldShowMiniPlayer {
+                        Color.clear.frame(height: miniPlayerAvoidanceHeight)
+                    }
                 }
-                await pageState.load(page: 2) { throw URLError(.notConnectedToInternet) }
-                return
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            if ProcessInfo.processInfo.environment["WISIMI_WORKS_CHECKS"] == "1" {
-                await WorksPageStateSelfCheck.run()
-                return
+            .background(.background)
+            .refreshable {
+                await loadWorks(page: 1)
+                withAnimation {
+                    proxy.scrollTo("top", anchor: .top)
+                }
             }
-            if ProcessInfo.processInfo.environment["WISIMI_VIDEO_CHECKS"] == "1" {
-                do { try await player.runVideoChecks() }
-                catch { assertionFailure("Video checks failed: \(error)") }
-                return
-            }
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "video" {
-                do { try await player.prepareDebugVideoPlayback() }
-                catch { assertionFailure("Video preview failed: \(error)") }
-                return
-            }
-            if ProcessInfo.processInfo.environment["WISIMI_PLAYBACK_CHECKS"] == "1" {
-                do { try await player.runPlaybackChecks() }
-                catch { assertionFailure("Playback checks failed: \(error)") }
-                return
-            }
-            #endif
-            await loadWorks(page: currentPage)
         }
+    }
+
+    @ToolbarContentBuilder
+    private var browserToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Menu {
+                if !showsLocalLibrary, auth.isLoggedIn {
+                    Button("退出登录", role: .destructive) {
+                        auth.logout()
+                        if browser.mode.requiresLogin {
+                            browser.mode = .latest
+                            Task { await reloadFromFirstPage() }
+                        }
+                    }
+                } else if !showsLocalLibrary {
+                    Button {
+                        isLoginPresented = true
+                    } label: {
+                        Label("登录", systemImage: "person.crop.circle")
+                    }
+                }
+
+                Button {
+                    isNarrationSettingsPresented = true
+                } label: {
+                    Label("混音", systemImage: "speaker.wave.2")
+                }
+            } label: {
+                if showsLocalLibrary {
+                    Label("菜单", systemImage: "ellipsis.circle")
+                } else {
+                    Label(auth.username ?? "菜单", systemImage: auth.isLoggedIn ? "person.crop.circle.fill" : "ellipsis.circle")
+                }
+            }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                path.append(.downloads)
+            } label: {
+                Label("下载管理", systemImage: "arrow.down.circle")
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            if !showsLocalLibrary && isLoading && !works.isEmpty {
+                ProgressView()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func destination(_ route: WorksRoute) -> some View {
+        switch route {
+        case .detail(.asmrOne(let workID)):
+            WorkDetailView(
+                workID: workID,
+                client: client,
+                auth: auth,
+                player: player,
+                reservesMiniPlayerSpace: shouldShowMiniPlayer,
+                onSearch: search,
+                onLoginRequired: { isLoginPresented = true },
+                onOpenWork: { path.append(.detail(.asmrOne($0))) }
+            )
+        case .detail(.local(let id)):
+            LocalWorkDetailView(id: id, source: source, player: player,
+                                reservesMiniPlayerSpace: shouldShowMiniPlayer) { localRevision += 1 }
+        case .downloads:
+            DownloadsView { path.append(.detail(.asmrOne($0))) }
+        case .player:
+            PlayerView(player: player, openWorkDetail: openPlayingWorkDetail)
+        }
+    }
+
+    private var filterSheet: some View {
+        WorksFilterSheet(
+            context: browser.filterContext,
+            filter: browser.filter,
+            reviewFilter: browser.reviewFilter,
+            catalog: catalog,
+            token: auth.token
+        ) { newFilter in
+            browser.filter = newFilter
+            Task { await reloadFromFirstPage() }
+        } onApplyReviewFilter: { newFilter in
+            browser.reviewFilter = newFilter
+            Task { await reloadFromFirstPage() }
+        } onApplyPlaylist: { playlistID in
+            catalog.selectedID = playlistID
+            Task { await reloadFromFirstPage() }
+        } onCatalogChanged: {
+            Task { await reloadFromFirstPage() }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func loadInitialContent() async {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "local-library" { return }
+        if let mp3 = ProcessInfo.processInfo.environment["WISIMI_LOCAL_MEDIA_CHECKS"] {
+            do { try await player.runLocalMediaChecks(mp3: URL(fileURLWithPath: mp3)) }
+            catch { assertionFailure("Local media checks failed: \(error)") }
+            return
+        }
+        if ProcessInfo.processInfo.environment["WISIMI_NARRATION_CHECKS"] == "1" {
+            do { try await player.runNarrationChecks() }
+            catch { assertionFailure("Narration checks failed: \(error)") }
+            return
+        }
+        if ProcessInfo.processInfo.environment["WISIMI_DOWNLOAD_PLAYBACK_CHECKS"] == "1" {
+            do { try await player.runDownloadedMediaCheck() }
+            catch { assertionFailure("Downloaded media check failed: \(error)") }
+            return
+        }
+        if let screen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"], screen.hasPrefix("download") {
+            do { try await DownloadStore.shared.prepareDebugDownloads() }
+            catch { DownloadStore.shared.message = error.localizedDescription }
+            return
+        }
+        if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "list-error" {
+            let json = #"{"works":[{"id":1,"title":"晚安 · 轻声陪伴与耳边细语","name":"Wisimi","has_subtitle":true,"tags":[],"vas":[]}],"pagination":{"currentPage":1,"pageSize":12,"totalCount":36}}"#
+            await pageState.load(page: 1) {
+                try JSONDecoder().decode(WorksResponse.self, from: Data(json.utf8))
+            }
+            await pageState.load(page: 2) { throw URLError(.notConnectedToInternet) }
+            return
+        }
+        if ProcessInfo.processInfo.environment["WISIMI_WORKS_CHECKS"] == "1" {
+            await WorksPageStateSelfCheck.run()
+            return
+        }
+        if ProcessInfo.processInfo.environment["WISIMI_VIDEO_CHECKS"] == "1" {
+            do { try await player.runVideoChecks() }
+            catch { assertionFailure("Video checks failed: \(error)") }
+            return
+        }
+        if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "video" {
+            do { try await player.prepareDebugVideoPlayback() }
+            catch { assertionFailure("Video preview failed: \(error)") }
+            return
+        }
+        if ProcessInfo.processInfo.environment["WISIMI_PLAYBACK_CHECKS"] == "1" {
+            do { try await player.runPlaybackChecks() }
+            catch { assertionFailure("Playback checks failed: \(error)") }
+            return
+        }
+        #endif
+        await loadWorks(page: currentPage)
     }
 
     private var shouldShowMiniPlayer: Bool {
@@ -322,8 +375,8 @@ struct WorksListView: View {
     }
 
     private func openPlayingWorkDetail() {
-        guard let workID = player.workID else { return }
-        path = WorksRoute.replacingPlayer(withDetail: workID, in: path)
+        guard let reference = player.workReference else { return }
+        path = WorksRoute.replacingPlayer(withDetail: reference, in: path)
     }
 
     private func runSearch() {
@@ -528,7 +581,8 @@ private struct MiniPlayerBar: View {
         HStack(spacing: 10) {
             Button(action: openPlayer) {
                 HStack(spacing: 10) {
-                    CoverImage(url: player.coverURL, cornerRadius: 6, size: CGSize(width: 42, height: 42))
+                    CoverImage(url: player.coverURL, cornerRadius: 6, size: CGSize(width: 42, height: 42),
+                               placeholderWhenMissing: player.workReference?.localID != nil)
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text(player.currentTrack?.title ?? "未播放")
