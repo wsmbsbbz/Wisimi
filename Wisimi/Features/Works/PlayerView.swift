@@ -378,6 +378,10 @@ private struct SubtitleListView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 MixStatusView(state: player.narrationState, retry: player.retryNarration)
             }
+            .task {
+                await Task.yield()
+                scrollToCurrentSubtitle(with: proxy, animated: false)
+            }
             .onChange(of: player.currentSubtitleIndex) {
                 guard canAutoScrollToCurrentSubtitle else { return }
                 scrollToCurrentSubtitle(with: proxy)
@@ -410,9 +414,13 @@ private struct SubtitleListView: View {
         scrollToCurrentSubtitle(with: proxy)
     }
 
-    private func scrollToCurrentSubtitle(with proxy: ScrollViewProxy) {
+    private func scrollToCurrentSubtitle(with proxy: ScrollViewProxy, animated: Bool = true) {
         guard let index = player.currentSubtitleIndex else { return }
-        withAnimation(.easeOut(duration: 0.25)) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo(index, anchor: .center)
+            }
+        } else {
             proxy.scrollTo(index, anchor: .center)
         }
     }

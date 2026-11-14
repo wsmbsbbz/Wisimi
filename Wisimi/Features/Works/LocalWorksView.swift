@@ -6,6 +6,7 @@ struct LocalWorksView: View {
     let catalog: any WorkCatalog
     let refreshID: Int?
     let reservesMiniPlayerSpace: Bool
+    var importTrigger: Int = 0
     let openWork: (WorkReference) -> Void
 
     @State private var downloads = DownloadStore.shared
@@ -22,13 +23,12 @@ struct LocalWorksView: View {
     @State private var syncTask: Task<Void, Never>?
     @State private var importStatus: String?
     @State private var importError: String?
-    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let globalSummary = DownloadSummary(entries: downloads.entries)
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                headerControls
+                storageSummary
 
                 if let importStatus {
                     HStack {
@@ -97,6 +97,11 @@ struct LocalWorksView: View {
         .onChange(of: downloads.catalogRevision) {
             Task { await load(page?.pagination.currentPage ?? 1, refresh: true) }
         }
+        .onChange(of: importTrigger) {
+            if importTask == nil {
+                showsPicker = true
+            }
+        }
         .refreshable {
             await load(page?.pagination.currentPage ?? 1, refresh: true)
             triggerPendingDLsiteSync()
@@ -113,39 +118,6 @@ struct LocalWorksView: View {
         } message: {
             Text(importError ?? "")
         }
-    }
-
-    @ViewBuilder
-    private var headerControls: some View {
-        if typeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 8) {
-                importButton
-                storageSummary
-            }
-        } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 12) {
-                    importButton
-                    Spacer(minLength: 8)
-                    storageSummary
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    importButton
-                    storageSummary
-                }
-            }
-        }
-    }
-
-    private var importButton: some View {
-        Button {
-            showsPicker = true
-        } label: {
-            Label("导入作品", systemImage: "plus")
-        }
-        .buttonStyle(.borderedProminent)
-        .frame(minHeight: 44)
-        .disabled(importTask != nil)
     }
 
     @ViewBuilder
@@ -410,7 +382,7 @@ struct LocalWorkDetailView: View {
     }
 
     private func onlineSourceLabel(_ onlineID: Int) -> some View {
-        Label("来自 asmr.one · RJ\(onlineID)", systemImage: "arrow.down.circle")
+        Label("来自 asmr.one · RJ\(String(onlineID))", systemImage: "arrow.down.circle")
             .font(.subheadline)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)

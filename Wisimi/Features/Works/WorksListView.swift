@@ -11,6 +11,7 @@ struct WorksListView: View {
     @State private var browser: WorksBrowserState
     @State private var showsLocalLibrary = false
     @State private var localRevision = 0
+    @State private var localImportTrigger = 0
     private var pageState: WorksPageState { browser.page }
 
     private var works: [WorkSummary] { pageState.works }
@@ -102,7 +103,8 @@ struct WorksListView: View {
                         .accessibilityHidden(showsLocalLibrary)
                     LocalWorksView(library: source.library, catalog: source.library,
                                    refreshID: showsLocalLibrary ? localRevision : nil,
-                                   reservesMiniPlayerSpace: shouldShowMiniPlayer) { reference in
+                                   reservesMiniPlayerSpace: shouldShowMiniPlayer,
+                                   importTrigger: localImportTrigger) { reference in
                         path.append(.detail(reference))
                     }
                     .opacity(showsLocalLibrary ? 1 : 0)
@@ -250,7 +252,13 @@ struct WorksListView: View {
         }
 
         ToolbarItem(placement: .topBarTrailing) {
-            if !showsLocalLibrary && isLoading && !works.isEmpty {
+            if showsLocalLibrary {
+                Button {
+                    localImportTrigger += 1
+                } label: {
+                    Label("导入作品", systemImage: "folder.badge.plus")
+                }
+            } else if isLoading && !works.isEmpty {
                 ProgressView()
             }
         }

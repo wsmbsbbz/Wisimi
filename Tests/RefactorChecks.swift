@@ -207,6 +207,30 @@ struct RefactorChecks {
         let loadedDownload = try await reopened.loadWork(downloadID)
         assert(loadedDownload.onlineWorkID == 99999999)
         assert(loadedDownload.tracks.first?.playbackURL?.isFileURL == true)
+
+        // Legacy imported manifest without byteCount should still count toward totalBytes
+        let legacyID = UUID()
+        let legacyDir = storage.appendingPathComponent(legacyID.uuidString, isDirectory: true)
+        let legacyFiles = legacyDir.appendingPathComponent("files", isDirectory: true)
+        try files.createDirectory(at: legacyFiles, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 128).write(to: legacyFiles.appendingPathComponent("01.mp3"))
+        let legacyIndex: [String: Any] = [
+            "entry": [
+                "id": legacyID.uuidString,
+                "importedAt": 0,
+                "folderName": "旧版导入作品",
+                "metadata": ["title": "旧版导入作品"],
+                "hasSubtitle": false
+            ],
+            "tracks": [[
+                "type": "audio",
+                "title": "01.mp3",
+                "hash": "01.mp3"
+            ]]
+        ]
+        try JSONSerialization.data(withJSONObject: legacyIndex).write(to: legacyDir.appendingPathComponent("index.json"))
+        let withLegacy = try await reopened.page(1, pageSize: 12, refresh: true)
+        assert(withLegacy.totalBytes == combined.totalBytes + 128)
     }
 
     @MainActor static func dlsiteMetadataChecks() async throws {

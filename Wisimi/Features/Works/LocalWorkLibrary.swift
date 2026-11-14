@@ -64,7 +64,7 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
 
     var title: String { Self.text(metadata.title) ?? folderName }
 
-    func updating(metadata: LocalWorkMetadata, needsDLsiteSync: Bool, warning: String?) -> LocalWorkEntry {
+    func updating(metadata: LocalWorkMetadata, needsDLsiteSync: Bool, warning: String?, byteCount: Int64? = nil) -> LocalWorkEntry {
         LocalWorkEntry(
             id: id,
             importedAt: importedAt,
@@ -74,7 +74,7 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
             metadataWarning: warning,
             needsDLsiteSync: needsDLsiteSync,
             onlineWorkID: onlineWorkID,
-            byteCount: byteCount
+            byteCount: byteCount ?? self.byteCount
         )
     }
 
@@ -177,6 +177,20 @@ actor LocalWorkLibrary: WorkCatalog {
                 let index = folder.appendingPathComponent("index.json")
                 let header = try JSONDecoder().decode(ManifestHeader.self, from: Data(contentsOf: index))
                 guard header.entry.id == id else { throw CocoaError(.fileReadCorruptFile) }
+                if header.entry.onlineWorkID == nil, header.entry.byteCount == 0 {
+                    let measuredBytes = directorySize(at: folder.appendingPathComponent("files", isDirectory: true))
+                    if measuredBytes > 0 {
+                        let backfilled = header.entry.updating(
+                            metadata: header.entry.metadata,
+                            needsDLsiteSync: header.entry.needsDLsiteSync,
+                            warning: header.entry.metadataWarning,
+                            byteCount: measuredBytes
+                        )
+                        try? persistUpdatedEntry(backfilled)
+                        entries.append(backfilled)
+                        continue
+                    }
+                }
                 entries.append(header.entry)
             } catch {
                 failed += 1
@@ -184,6 +198,22 @@ actor LocalWorkLibrary: WorkCatalog {
         }
         catalog = entries.sorted(by: Self.newestFirst)
         unreadableCount = failed
+    }
+
+    private func directorySize(at root: URL) -> Int64 {
+        guard let enumerator = files.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink == false else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
     }
 
     private nonisolated static func newestFirst(_ first: LocalWorkEntry, _ second: LocalWorkEntry) -> Bool {
