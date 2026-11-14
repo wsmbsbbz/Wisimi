@@ -18,6 +18,7 @@ struct LocalWorksView: View {
     @State private var confirmsImport = false
     @State private var plan: LocalImportPlan?
     @State private var importTask: Task<Void, Never>?
+    @State private var syncTask: Task<Void, Never>?
     @State private var importStatus: String?
     @State private var importError: String?
 
@@ -73,9 +74,15 @@ struct LocalWorksView: View {
         }
         .scrollPosition($scrollPosition)
         .task(id: refreshID) {
-            if refreshID != nil { await load(page?.pagination.currentPage ?? 1) }
+            if refreshID != nil {
+                await load(page?.pagination.currentPage ?? 1)
+                triggerPendingDLsiteSync()
+            }
         }
-        .refreshable { await load(page?.pagination.currentPage ?? 1, refresh: true) }
+        .refreshable {
+            await load(page?.pagination.currentPage ?? 1, refresh: true)
+            triggerPendingDLsiteSync()
+        }
         .fileImporter(isPresented: $showsPicker, allowedContentTypes: [.folder], onCompletion: inspectSelection)
         .confirmationDialog("导入作品副本", isPresented: $confirmsImport, titleVisibility: .visible, presenting: plan) { plan in
             Button("复制并导入") { runImportTask("正在复制作品…") { try await importWork(plan) } }
@@ -126,6 +133,17 @@ struct LocalWorksView: View {
     private func importWork(_ plan: LocalImportPlan) async throws {
         _ = try await library.importWork(plan)
         await load(1, scrollToTop: true)
+        triggerPendingDLsiteSync()
+    }
+
+    private func triggerPendingDLsiteSync() {
+        guard syncTask == nil else { return }
+        syncTask = Task {
+            defer { syncTask = nil }
+            let updated = await library.syncPendingDLsiteMetadataIfNeeded()
+            guard updated, !Task.isCancelled else { return }
+            await load(page?.pagination.currentPage ?? 1)
+        }
     }
 
     private func runImportTask(_ status: String, operation: @escaping @MainActor () async throws -> Void) {

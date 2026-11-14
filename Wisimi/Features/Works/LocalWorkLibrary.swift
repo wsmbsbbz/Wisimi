@@ -19,8 +19,54 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
     let metadata: LocalWorkMetadata
     let hasSubtitle: Bool
     let metadataWarning: String?
+    let needsDLsiteSync: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, importedAt, folderName, metadata, hasSubtitle, metadataWarning, needsDLsiteSync
+    }
+
+    init(
+        id: UUID,
+        importedAt: Date,
+        folderName: String,
+        metadata: LocalWorkMetadata,
+        hasSubtitle: Bool,
+        metadataWarning: String?,
+        needsDLsiteSync: Bool = false
+    ) {
+        self.id = id
+        self.importedAt = importedAt
+        self.folderName = folderName
+        self.metadata = metadata
+        self.hasSubtitle = hasSubtitle
+        self.metadataWarning = metadataWarning
+        self.needsDLsiteSync = needsDLsiteSync
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        importedAt = try container.decode(Date.self, forKey: .importedAt)
+        folderName = try container.decode(String.self, forKey: .folderName)
+        metadata = try container.decode(LocalWorkMetadata.self, forKey: .metadata)
+        hasSubtitle = try container.decode(Bool.self, forKey: .hasSubtitle)
+        metadataWarning = try container.decodeIfPresent(String.self, forKey: .metadataWarning)
+        needsDLsiteSync = try container.decodeIfPresent(Bool.self, forKey: .needsDLsiteSync) ?? false
+    }
 
     var title: String { Self.text(metadata.title) ?? folderName }
+
+    func updating(metadata: LocalWorkMetadata, needsDLsiteSync: Bool, warning: String?) -> LocalWorkEntry {
+        LocalWorkEntry(
+            id: id,
+            importedAt: importedAt,
+            folderName: folderName,
+            metadata: metadata,
+            hasSubtitle: hasSubtitle,
+            metadataWarning: warning,
+            needsDLsiteSync: needsDLsiteSync
+        )
+    }
 
     func presentation(in directory: URL) -> WorkPresentation {
         WorkPresentation(
@@ -74,15 +120,18 @@ actor LocalWorkLibrary: WorkCatalog {
 
     nonisolated let directory: URL
     private let requiresSecurityScope: Bool
+    private let dlsiteClient: any DLsiteMetadataFetching
     private let files = FileManager.default
     private var isPrepared = false
     private var catalog: [LocalWorkEntry]?
     private var unreadableCount = 0
 
     init(directory: URL = URL.applicationSupportDirectory.appending(path: "LocalWorks", directoryHint: .isDirectory),
-         requiresSecurityScope: Bool = true) {
+         requiresSecurityScope: Bool = true,
+         dlsiteClient: any DLsiteMetadataFetching = DLsiteMetadataClient()) {
         self.directory = directory
         self.requiresSecurityScope = requiresSecurityScope
+        self.dlsiteClient = dlsiteClient
     }
 
     func page(_ number: Int, pageSize: Int, refresh: Bool) throws -> WorkCatalogPage {
@@ -176,6 +225,79 @@ actor LocalWorkLibrary: WorkCatalog {
         try? files.removeItem(at: staging)
     }
 
+    func syncPendingDLsiteMetadataIfNeeded() async -> Bool {
+        if catalog == nil { try? loadCatalog() }
+        var didUpdate = false
+        var attemptedIDs: Set<UUID> = []
+        while !Task.isCancelled {
+            guard let entry = (catalog ?? []).first(where: { $0.needsDLsiteSync && !attemptedIDs.contains($0.id) }) else {
+                break
+            }
+            attemptedIDs.insert(entry.id)
+            if await performDLsiteSync(for: entry) {
+                didUpdate = true
+            }
+        }
+        return didUpdate
+    }
+
+    private func performDLsiteSync(for entry: LocalWorkEntry) async -> Bool {
+        guard let rjCode = RJCodeExtractor.extract(from: entry.folderName) else {
+            try? persistUpdatedEntry(entry.updating(metadata: entry.metadata, needsDLsiteSync: false, warning: entry.metadataWarning))
+            return false
+        }
+        let root = contentDirectory(for: entry.id)
+        let jsonURL = root.appendingPathComponent("wisimi.json")
+        if files.fileExists(atPath: jsonURL.path) {
+            try? persistUpdatedEntry(entry.updating(metadata: entry.metadata, needsDLsiteSync: false, warning: entry.metadataWarning))
+            return false
+        }
+
+        do {
+            let result = try await dlsiteClient.fetchMetadata(for: rjCode)
+            try Task.checkCancellation()
+            guard files.fileExists(atPath: workDirectory(entry.id).path) else { return false }
+
+            var merged = result.metadata
+            merged.duration = merged.duration ?? entry.metadata.duration
+            merged.cover = entry.metadata.cover
+            if merged.cover == nil, let coverURL = result.coverURL {
+                let coverData = try? await dlsiteClient.downloadCover(from: coverURL)
+                try Task.checkCancellation()
+                guard files.fileExists(atPath: workDirectory(entry.id).path) else { return false }
+                if let coverData {
+                    let ext = coverURL.pathExtension.isEmpty ? "jpg" : coverURL.pathExtension.lowercased()
+                    let coverName = "cover.\(ext)"
+                    if (try? coverData.write(to: root.appendingPathComponent(coverName), options: .atomic)) != nil {
+                        merged.cover = coverName
+                    }
+                }
+            }
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(merged).write(to: jsonURL, options: .atomic)
+            try persistUpdatedEntry(entry.updating(metadata: merged, needsDLsiteSync: false, warning: nil))
+            return true
+        } catch DLsiteMetadataError.notFound {
+            guard files.fileExists(atPath: workDirectory(entry.id).path) else { return false }
+            try? persistUpdatedEntry(entry.updating(metadata: entry.metadata, needsDLsiteSync: false, warning: entry.metadataWarning))
+            return false
+        } catch {
+            return false
+        }
+    }
+
+    private func persistUpdatedEntry(_ updated: LocalWorkEntry, manifest: Manifest? = nil) throws {
+        let currentManifest = try manifest ?? read(updated.id)
+        let updatedManifest = Manifest(entry: updated, tracks: currentManifest.tracks)
+        let indexURL = workDirectory(updated.id).appendingPathComponent("index.json")
+        try JSONEncoder().encode(updatedManifest).write(to: indexURL, options: .atomic)
+        if let index = catalog?.firstIndex(where: { $0.id == updated.id }) {
+            catalog?[index] = updated
+        }
+    }
+
     private func prepareDirectory() throws {
         guard !isPrepared else { return }
         try files.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -221,7 +343,8 @@ actor LocalWorkLibrary: WorkCatalog {
         var metadata = LocalWorkMetadata()
         var warning: String?
         let json = root.appendingPathComponent("wisimi.json")
-        if files.fileExists(atPath: json.path) {
+        let hasLocalJSON = files.fileExists(atPath: json.path)
+        if hasLocalJSON {
             do {
                 let values = try json.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
                 if values.isRegularFile == true, values.isSymbolicLink == false, let size = values.fileSize, size <= 256 * 1024 {
@@ -238,8 +361,10 @@ actor LocalWorkLibrary: WorkCatalog {
             metadata.cover = nil
         }
         metadata.cover = metadata.cover ?? ["cover.jpg", "cover.png"].first(where: scan.images.contains)
-        let entry = LocalWorkEntry(id: id, importedAt: Date(), folderName: root.lastPathComponent, metadata: metadata,
-                                   hasSubtitle: scan.hasSubtitle, metadataWarning: warning)
+        let folderName = root.lastPathComponent
+        let needsSync = !hasLocalJSON && RJCodeExtractor.extract(from: folderName) != nil
+        let entry = LocalWorkEntry(id: id, importedAt: Date(), folderName: folderName, metadata: metadata,
+                                   hasSubtitle: scan.hasSubtitle, metadataWarning: warning, needsDLsiteSync: needsSync)
         return (entry, tracks, scan.bytes)
     }
 

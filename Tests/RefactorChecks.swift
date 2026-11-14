@@ -83,6 +83,7 @@ struct RefactorChecks {
         try await browserChecks()
         try await detailChecks()
         try await localLibraryChecks()
+        try await dlsiteMetadataChecks()
         try await similarWorksChecks()
         try await playlistMembershipChecks()
         try await raceChecks()
@@ -177,6 +178,132 @@ struct RefactorChecks {
         let reloaded = try await reopened.page(1, pageSize: 12, refresh: true)
         assert(reloaded.unreadableCount == 1)
         assert(Set(reloaded.works.map(\.id)) == [.local(registered.id), .local(unsafe.id), .local(malformed.id)])
+    }
+
+    @MainActor static func dlsiteMetadataChecks() async throws {
+        assert(RJCodeExtractor.extract(from: "RJ01649840") == "RJ01649840")
+        assert(RJCodeExtractor.extract(from: "rj123456") == "RJ123456")
+        assert(RJCodeExtractor.extract(from: "【中文版】[RJ12345678] 作品标题 (CV.测试)") == "RJ12345678")
+        assert(RJCodeExtractor.extract(from: "prefix_rj1_suffix") == "RJ1")
+        assert(RJCodeExtractor.extract(from: "TRJ123456") == nil)
+        assert(RJCodeExtractor.extract(from: "RJ123456789") == nil)
+        assert(RJCodeExtractor.extract(from: "纯本地作品无编号") == nil)
+
+        let productJSON = Data(#"[{"workno":"RJ01649840","work_name":"测试标题","maker_name":"みんなで翻訳","genres":[{"name":"魔女"},{"name":"魔女"}],"creaters":{"voice_by":[{"name":"大山チロル"}]},"translation_info":{"original_workno":"RJ01631266"},"image_main":{"url":"//img.dlsite.jp/test/cover.jpg"}}]"#.utf8)
+        let parsedProduct = try DLsiteMetadataClient.parseProductJSON(productJSON)
+        assert(parsedProduct.workno == "RJ01649840" && parsedProduct.translationInfo?.originalWorkno == "RJ01631266")
+        assert(DLsiteMetadataClient.resolveImageURL(parsedProduct.imageMain?.url)?.absoluteString == "https://img.dlsite.jp/test/cover.jpg")
+        let ajaxJSON = Data(#"{"RJ01649840":{"dl_count":27,"rate_average_2dp":4.78}}"#.utf8)
+        let parsedAjax = try DLsiteMetadataClient.parseAjaxJSON(ajaxJSON, for: "RJ01649840")
+        assert(parsedAjax.dlCount == 27 && parsedAjax.rateAverage2dp == 4.78)
+
+        final class DLsiteStub: DLsiteMetadataFetching, @unchecked Sendable {
+            var fetchedCodes: [String] = []
+            func fetchMetadata(for rjCode: String) async throws -> DLsiteMetadataResult {
+                fetchedCodes.append(rjCode)
+                if rjCode == "RJ99999999" { throw DLsiteMetadataError.notFound }
+                return DLsiteMetadataResult(
+                    metadata: LocalWorkMetadata(
+                        title: "DLsite 标题", circle: "原社团", duration: nil, rating: 4.78, sales: 27,
+                        catalogCode: rjCode, tags: ["标签A"], voiceActors: ["声优A"], cover: nil
+                    ),
+                    coverURL: URL(string: "https://img.dlsite.jp/test/cover.jpg")
+                )
+            }
+            func downloadCover(from url: URL) async throws -> Data { Data([0xFF, 0xD8, 0xFF, 0xD9]) }
+        }
+
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? files.removeItem(at: root) }
+        let source = root.appendingPathComponent("【汉化】rj01649840_测试作品")
+        let notFoundSource = root.appendingPathComponent("RJ99999999_不存在")
+        let storage = root.appendingPathComponent("Storage")
+        try files.createDirectory(at: source, withIntermediateDirectories: true)
+        try files.createDirectory(at: notFoundSource, withIntermediateDirectories: true)
+        try Data("audio".utf8).write(to: source.appendingPathComponent("01.mp3"))
+        try Data("audio".utf8).write(to: notFoundSource.appendingPathComponent("01.mp3"))
+
+        let stub = DLsiteStub()
+        let library = LocalWorkLibrary(directory: storage, requiresSecurityScope: false, dlsiteClient: stub)
+        let imported = try await library.importWork(library.inspect(source))
+        let missing = try await library.importWork(library.inspect(notFoundSource))
+        assert(imported.needsDLsiteSync && missing.needsDLsiteSync)
+        let didSync = await library.syncPendingDLsiteMetadataIfNeeded()
+        assert(didSync && Set(stub.fetchedCodes) == ["RJ01649840", "RJ99999999"] && stub.fetchedCodes.count == 2)
+
+        let savedJSON = library.contentDirectory(for: imported.id).appendingPathComponent("wisimi.json")
+        assert(files.fileExists(atPath: savedJSON.path))
+        let decodedJSON = try JSONDecoder().decode(LocalWorkMetadata.self, from: Data(contentsOf: savedJSON))
+        assert(decodedJSON.title == "DLsite 标题" && decodedJSON.circle == "原社团" && decodedJSON.cover == "cover.jpg")
+        assert(decodedJSON.sales == 27 && decodedJSON.rating == 4.78 && decodedJSON.catalogCode == "RJ01649840")
+
+        let loaded = try await library.loadWork(imported.id)
+        assert(loaded.work.title == "DLsite 标题" && loaded.work.coverURL?.lastPathComponent == "cover.jpg")
+
+        let restarted = LocalWorkLibrary(directory: storage, requiresSecurityScope: false, dlsiteClient: stub)
+        let didSyncAfterRestart = await restarted.syncPendingDLsiteMetadataIfNeeded()
+        assert(!didSyncAfterRestart && stub.fetchedCodes.count == 2)
+        let missingLoaded = try await restarted.loadWork(missing.id)
+        assert(missingLoaded.work.title == "RJ99999999_不存在")
+
+        let existingSource = root.appendingPathComponent("RJ01753619_自带元数据")
+        try files.createDirectory(at: existingSource, withIntermediateDirectories: true)
+        try Data("audio".utf8).write(to: existingSource.appendingPathComponent("01.mp3"))
+        try Data(#"{"title":"本地自定义标题","catalogCode":"RJ01753619"}"#.utf8)
+            .write(to: existingSource.appendingPathComponent("wisimi.json"))
+        let existingEntry = try await restarted.importWork(restarted.inspect(existingSource))
+        assert(!existingEntry.needsDLsiteSync)
+        let didSyncExisting = await restarted.syncPendingDLsiteMetadataIfNeeded()
+        assert(!didSyncExisting && stub.fetchedCodes.count == 2)
+
+        let httpConfig = URLSessionConfiguration.ephemeral
+        httpConfig.protocolClasses = [HTTPStub.self]
+        let stubClient = DLsiteMetadataClient(session: URLSession(configuration: httpConfig))
+        defer {
+            HTTPStub.respond = nil
+            HTTPStub.payload = nil
+            HTTPStub.hold = nil
+        }
+        HTTPStub.respond = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("workno=RJ01649840") {
+                return (200, #"[{"workno":"RJ01649840","work_name":"翻译标题","maker_name":"みんなで翻訳","genres":[{"name":"魔女"}],"creaters":{"voice_by":[{"name":"大山チロル"}]},"translation_info":{"original_workno":"RJ01631266"},"image_main":{"url":"//img.dlsite.jp/test/RJ01631266_img_main.jpg"}}]"#)
+            }
+            if url.contains("workno=RJ01631266") {
+                return (200, #"[{"workno":"RJ01631266","maker_name":"愛毒レース"}]"#)
+            }
+            if url.contains("product_id=RJ01649840") {
+                return (200, #"{"RJ01649840":{"dl_count":27,"rate_average_2dp":4.78}}"#)
+            }
+            return (404, "[]")
+        }
+        let fetched = try await stubClient.fetchMetadata(for: "RJ01649840")
+        assert(fetched.metadata.title == "翻译标题" && fetched.metadata.circle == "愛毒レース")
+        assert(fetched.metadata.sales == 27 && fetched.metadata.rating == 4.78)
+        assert(fetched.coverURL?.absoluteString == "https://img.dlsite.jp/test/RJ01631266_img_main.jpg")
+
+        HTTPStub.payload = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        HTTPStub.respond = { _ in (200, "") }
+        let coverBytes = try await stubClient.downloadCover(from: fetched.coverURL!)
+        assert(coverBytes == Data([0xFF, 0xD8, 0xFF, 0xD9]))
+
+        HTTPStub.payload = nil
+        HTTPStub.respond = { _ in (200, "<html>error</html>") }
+        do {
+            _ = try await stubClient.downloadCover(from: fetched.coverURL!)
+            assertionFailure("HTML payload must be rejected for cover download")
+        } catch let error as DLsiteMetadataError {
+            assert(error == .invalidResponse)
+        }
+
+        HTTPStub.respond = { _ in throw URLError(.notConnectedToInternet) }
+        do {
+            _ = try await stubClient.fetchMetadata(for: "RJ01649840")
+            assertionFailure("URLError should propagate")
+        } catch let error as URLError {
+            assert(error.code == .notConnectedToInternet)
+        }
     }
 
     @MainActor static func speechChecks() async throws {
