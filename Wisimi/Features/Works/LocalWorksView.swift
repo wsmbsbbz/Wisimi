@@ -267,7 +267,7 @@ struct LocalWorkDetailView: View {
     @State private var deleteError: String?
     @State private var confirmsRemoval = false
     @State private var isRemoving = false
-    @State private var pendingEntryDeletion: DownloadEntry?
+    @State private var pendingEntriesDeletion: [DownloadEntry] = []
 
     private var onlineWorkID: Int? {
         loaded?.onlineWorkID ?? downloads.savedWork(localWorkID: id)?.work.id
@@ -294,7 +294,7 @@ struct LocalWorkDetailView: View {
                                 isPathMenuExpanded: $isPathMenuExpanded,
                                 player: player,
                                 localWorkID: onlineWorkID != nil ? id : nil,
-                                onDeleteEntry: { entry in pendingEntryDeletion = entry }
+                                onDeleteEntries: { entries in pendingEntriesDeletion = entries }
                             )
                         }
                         if reservesMiniPlayerSpace {
@@ -328,16 +328,23 @@ struct LocalWorkDetailView: View {
                  ? "将取消未完成的下载并删除已下载的文件，可在在线详情中重新下载。"
                  : "将删除 Wisimi 中导入的文件，原文件会保留。")
         }
-        .alert("删除文件「\(pendingEntryDeletion?.track.title ?? "")」？", isPresented: Binding(
-            get: { pendingEntryDeletion != nil },
-            set: { if !$0 { pendingEntryDeletion = nil } }
-        ), presenting: pendingEntryDeletion) { entry in
-            Button("删除文件", role: .destructive) {
-                Task { await deleteEntry(entry) }
+        .confirmationDialog(
+            pendingEntriesDeletion.count == 1
+                ? "删除文件「\(pendingEntriesDeletion[0].track.title)」？"
+                : "删除所选的 \(pendingEntriesDeletion.count) 个文件？",
+            isPresented: Binding(
+                get: { !pendingEntriesDeletion.isEmpty },
+                set: { if !$0 { pendingEntriesDeletion = [] } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(pendingEntriesDeletion.count == 1 ? "删除文件" : "删除 \(pendingEntriesDeletion.count) 个文件", role: .destructive) {
+                let entries = pendingEntriesDeletion
+                pendingEntriesDeletion = []
+                Task { await deleteEntries(entries) }
             }
-            Button("取消", role: .cancel) {}
-        } message: { _ in
-            Text("将取消下载或删除本地文件；如这是本作品最后一个文件，作品也会一并移除。")
+        } message: {
+            Text("将取消下载或删除本地文件；如已无剩余文件，作品也会一并移除。")
         }
         .alert("删除失败", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
             Button("好", role: .cancel) {}
@@ -423,15 +430,18 @@ struct LocalWorkDetailView: View {
         } catch {}
     }
 
-    private func deleteEntry(_ entry: DownloadEntry) async {
+    private func deleteEntries(_ entries: [DownloadEntry]) async {
+        guard !entries.isEmpty else { return }
         downloads.message = nil
-        downloads.remove([entry.id])
+        downloads.remove(Set(entries.map(\.id)))
         if let error = downloads.message {
             deleteError = error
             downloads.message = nil
             return
         }
-        player.removeLocalWorkFromPlayback(id, trackID: entry.trackID)
+        for entry in entries {
+            player.removeLocalWorkFromPlayback(id, trackID: entry.trackID)
+        }
         if downloads.savedWork(localWorkID: id) == nil {
             try? await source.library.remove(id)
             onDeleted()

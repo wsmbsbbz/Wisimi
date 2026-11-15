@@ -10,7 +10,7 @@ struct TrackBrowserView: View {
     let player: WorkAudioPlayer
     var localWorkID: UUID? = nil
     var onOpenLocalLibrary: (() -> Void)? = nil
-    var onDeleteEntry: ((DownloadEntry) -> Void)? = nil
+    var onDeleteEntries: (([DownloadEntry]) -> Void)? = nil
     @State private var imagePreview: TrackImagePreview?
     @State private var downloads = DownloadStore.shared
     @State private var isSelecting = false
@@ -24,8 +24,13 @@ struct TrackBrowserView: View {
     }
 
     private func selectableFiles(in nodes: [TrackNode]) -> [TrackNode] {
-        guard onlineWork != nil else { return [] }
-        return nodes.downloadableFiles.filter { !isAlreadyDownloaded($0) }
+        if onlineWork != nil {
+            return nodes.downloadableFiles.filter { !isAlreadyDownloaded($0) }
+        }
+        if localWorkID != nil {
+            return nodes.downloadableFiles.filter { downloadEntry(for: $0) != nil }
+        }
+        return []
     }
 
     private var selectedFiles: [TrackNode] {
@@ -33,9 +38,19 @@ struct TrackBrowserView: View {
         return selectableFiles(in: tracks).filter { selection.contains(DownloadStore.key(for: $0, workID: onlineWork.id)) }
     }
 
+    private var selectedEntries: [DownloadEntry] {
+        guard localWorkID != nil else { return [] }
+        return selectableFiles(in: tracks).compactMap { downloadEntry(for: $0) }.filter { selection.contains($0.id.uuidString) }
+    }
+
     private func keys(for nodes: [TrackNode]) -> Set<String> {
-        guard let onlineWork else { return [] }
-        return Set(selectableFiles(in: nodes).map { DownloadStore.key(for: $0, workID: onlineWork.id) })
+        if let onlineWork {
+            return Set(selectableFiles(in: nodes).map { DownloadStore.key(for: $0, workID: onlineWork.id) })
+        }
+        if localWorkID != nil {
+            return Set(selectableFiles(in: nodes).compactMap { downloadEntry(for: $0)?.id.uuidString })
+        }
+        return []
     }
 
     private func toggleSelection(_ nodes: [TrackNode]) {
@@ -68,6 +83,7 @@ struct TrackBrowserView: View {
                     errorMessage: isLocalDetail ? "本地文件已丢失，请重新下载" : nil
                 )
             }
+            if isLocalDetail { return nil }
             return TrackDownloadStatus(title: "已下载", symbol: "checkmark.circle.fill", tone: .completed)
         case .downloading:
             let title = entry.progress.map { "下载中 \(Int(($0 * 100).rounded()))%" } ?? entry.displayStatus
@@ -189,12 +205,13 @@ struct TrackBrowserView: View {
                 LazyVStack(spacing: 8) {
                     ForEach(itemRows) { item in
                         let localEntry = localWorkID != nil ? downloadEntry(for: item.node) : nil
+                        let transferAction = localEntry.flatMap { TrackTransferAction(entry: $0, downloads: downloads) }
                         let row = TrackBrowserNode(
                             item: item,
                             status: rowStatus(for: item.node),
                             localEntry: localEntry,
                             downloads: downloads,
-                            onDeleteEntry: onDeleteEntry,
+                            onDeleteEntries: onDeleteEntries,
                             openFolder: openFolder,
                             previewImage: { item in
                                 if isSelecting { toggleSelection([item.node]) }
@@ -212,21 +229,27 @@ struct TrackBrowserView: View {
                             HStack(spacing: 8) {
                                 selectionIndicator(for: item.node)
                                 row
+                                    .background(.background.opacity(0.65), in: .rect(cornerRadius: 12))
                             }
-                        } else if let localEntry {
-                            if typeSize.isAccessibilitySize {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    row
-                                    localEntryControls(localEntry)
-                                }
-                            } else {
-                                HStack(spacing: 4) {
-                                    row
-                                    localEntryControls(localEntry)
+                        } else if let localEntry, let transferAction {
+                            Group {
+                                if typeSize.isAccessibilitySize {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        row
+                                        localTransferButton(transferAction, title: localEntry.track.title)
+                                    }
+                                } else {
+                                    HStack(spacing: 0) {
+                                        row
+                                        localTransferButton(transferAction, title: localEntry.track.title)
+                                            .padding(.trailing, 4)
+                                    }
                                 }
                             }
+                            .background(.background.opacity(0.65), in: .rect(cornerRadius: 12))
                         } else {
                             row
+                                .background(.background.opacity(0.65), in: .rect(cornerRadius: 12))
                         }
                     }
                 }
@@ -255,7 +278,7 @@ struct TrackBrowserView: View {
 
             Spacer()
 
-            if onlineWork != nil {
+            if onlineWork != nil || (localWorkID != nil && onDeleteEntries != nil) {
                 Button(isSelecting ? "完成" : "选择") {
                     isSelecting.toggle()
                     if !isSelecting { selection.removeAll() }
@@ -271,7 +294,7 @@ struct TrackBrowserView: View {
     @ViewBuilder
     private func selectionIndicator(for node: TrackNode) -> some View {
         let ids = keys(for: [node])
-        let allAlreadyDownloaded = ids.isEmpty && !([node].downloadableFiles.isEmpty)
+        let allAlreadyDownloaded = onlineWork != nil && ids.isEmpty && !([node].downloadableFiles.isEmpty)
         if allAlreadyDownloaded {
             Image(systemName: "checkmark.circle.fill")
                 .font(.title3)
@@ -294,36 +317,15 @@ struct TrackBrowserView: View {
         }
     }
 
-    @ViewBuilder
-    private func localEntryControls(_ entry: DownloadEntry) -> some View {
-        let transferAction = TrackTransferAction(entry: entry, downloads: downloads)
-        HStack(spacing: 0) {
-            if let transferAction {
-                Button(action: transferAction.perform) {
-                    Label(transferAction.shortTitle, systemImage: transferAction.symbol)
-                        .labelStyle(.iconOnly)
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("\(transferAction.shortTitle)：\(entry.track.title)")
-            }
-            if let onDeleteEntry {
-                Menu {
-                    if let transferAction {
-                        Button(transferAction.menuTitle, systemImage: transferAction.symbol, action: transferAction.perform)
-                    }
-                    Button("删除文件", systemImage: "trash", role: .destructive) {
-                        onDeleteEntry(entry)
-                    }
-                } label: {
-                    Label("文件操作", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("操作：\(entry.track.title)")
-            }
+    private func localTransferButton(_ transferAction: TrackTransferAction, title: String) -> some View {
+        Button(action: transferAction.perform) {
+            Label(transferAction.shortTitle, systemImage: transferAction.symbol)
+                .labelStyle(.iconOnly)
+                .frame(width: 44, height: 44)
         }
         .buttonStyle(.borderless)
         .disabled(!downloads.isReady)
+        .accessibilityLabel("\(transferAction.shortTitle)：\(title)")
     }
 
     private var selectionControls: some View {
@@ -338,22 +340,38 @@ struct TrackBrowserView: View {
                 Button("清空") { selection.removeAll() }.disabled(selection.isEmpty)
             }
             .font(.subheadline)
-            Text("已选 \(selectedFiles.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: selectedFiles.reduce(0) { $0 + Int64($1.size ?? 0) }, countStyle: .file))\(selectedFiles.contains { $0.size == nil } ? "（部分大小未知）" : "")")
-                .font(.caption).foregroundStyle(.secondary)
-            Button {
-                guard let onlineWork else { return }
-                let files = DownloadSelection.includingSubtitles(selectedFiles, in: tracks, workID: onlineWork.id)
-                if downloads.enqueue(files, work: onlineWork, tracks: tracks) {
-                    submissionMessage = "已加入下载，匹配字幕会一并缓存。可在「本地」中查看进度。"
+            if onlineWork != nil {
+                Text("已选 \(selectedFiles.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: selectedFiles.reduce(0) { $0 + Int64($1.size ?? 0) }, countStyle: .file))\(selectedFiles.contains { $0.size == nil } ? "（部分大小未知）" : "")")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button {
+                    guard let onlineWork else { return }
+                    let files = DownloadSelection.includingSubtitles(selectedFiles, in: tracks, workID: onlineWork.id)
+                    if downloads.enqueue(files, work: onlineWork, tracks: tracks) {
+                        submissionMessage = "已加入下载，匹配字幕会一并缓存。可在「本地」中查看进度。"
+                        selection.removeAll()
+                        isSelecting = false
+                    }
+                } label: {
+                    Label("下载所选文件", systemImage: "arrow.down.to.line")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selection.isEmpty || !downloads.isReady)
+            } else {
+                Text("已选 \(selectedEntries.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: selectedEntries.reduce(0) { $0 + max($1.received, 0) }, countStyle: .file))")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button(role: .destructive) {
+                    onDeleteEntries?(selectedEntries)
                     selection.removeAll()
                     isSelecting = false
+                } label: {
+                    Label("删除所选文件", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
                 }
-            } label: {
-                Label("下载所选文件", systemImage: "arrow.down.to.line")
-                    .frame(maxWidth: .infinity)
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(selectedEntries.isEmpty || !downloads.isReady)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(selection.isEmpty || !downloads.isReady)
         }
     }
 
@@ -409,7 +427,7 @@ private struct TrackBrowserNode: View {
     let status: TrackDownloadStatus?
     let localEntry: DownloadEntry?
     let downloads: DownloadStore
-    let onDeleteEntry: ((DownloadEntry) -> Void)?
+    let onDeleteEntries: (([DownloadEntry]) -> Void)?
     let openFolder: (TrackNode) -> Void
     let previewImage: (TrackDisplayItem) -> Void
     let playMedia: (TrackNode) -> Void
@@ -420,7 +438,7 @@ private struct TrackBrowserNode: View {
                 title: item.node.title,
                 localEntry: localEntry,
                 downloads: downloads,
-                onDeleteEntry: onDeleteEntry
+                onDeleteEntries: onDeleteEntries
             ))
     }
 
@@ -478,7 +496,7 @@ private struct TrackNodeMenuModifier: ViewModifier {
     let title: String
     let localEntry: DownloadEntry?
     let downloads: DownloadStore
-    let onDeleteEntry: ((DownloadEntry) -> Void)?
+    let onDeleteEntries: (([DownloadEntry]) -> Void)?
 
     func body(content: Content) -> some View {
         if let localEntry {
@@ -488,14 +506,12 @@ private struct TrackNodeMenuModifier: ViewModifier {
                     Button(transferAction.menuTitle, systemImage: transferAction.symbol, action: transferAction.perform)
                         .disabled(!downloads.isReady)
                 }
-                Button {
+                Button("复制文件名", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = title
-                } label: {
-                    Label("复制文件名", systemImage: "doc.on.doc")
                 }
-                if let onDeleteEntry {
+                if let onDeleteEntries {
                     Button("删除文件", systemImage: "trash", role: .destructive) {
-                        onDeleteEntry(localEntry)
+                        onDeleteEntries([localEntry])
                     }
                     .disabled(!downloads.isReady)
                 }

@@ -70,7 +70,6 @@ struct TrackNodeRow: View {
             }
         }
         .padding(10)
-        .background(.background.opacity(0.65), in: .rect(cornerRadius: 12))
         .frame(minHeight: 44)
         .contentShape(.rect)
     }
