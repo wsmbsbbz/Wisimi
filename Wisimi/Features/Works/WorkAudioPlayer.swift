@@ -50,6 +50,8 @@ final class WorkAudioPlayer: ObservableObject {
     private var isActivatingAudioSession = false
     private var lastSavedPosition: TimeInterval = -1
     private var lastNarrationID: String?
+    private var activeSeekID: UInt64 = 0
+    private var isSeekingPlayer = false
 
     init(source: WorkSource, ttsSettings: TTSMixSettings) {
         self.source = source
@@ -102,7 +104,7 @@ final class WorkAudioPlayer: ObservableObject {
             .store(in: &settingsCancellables)
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor in self.syncProgress() }
+            MainActor.assumeIsolated { self.syncProgress() }
         }
         Task { await restorePlayback() }
     }
@@ -200,7 +202,7 @@ final class WorkAudioPlayer: ObservableObject {
 
     func seek(to seconds: TimeInterval) {
         let target = max(0, min(seconds, duration))
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        seekPlayer(to: target)
         position = target
         updateSubtitle()
         stopNarration(clearLast: true)
@@ -208,6 +210,22 @@ final class WorkAudioPlayer: ObservableObject {
         syncNarration()
         updateNowPlaying()
         savePlayback(force: true)
+    }
+
+    private func seekPlayer(to seconds: TimeInterval) {
+        activeSeekID &+= 1
+        let seekID = activeSeekID
+        guard player.currentItem != nil, seconds.isFinite else {
+            isSeekingPlayer = false
+            return
+        }
+        isSeekingPlayer = true
+        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.activeSeekID == seekID else { return }
+                self.isSeekingPlayer = false
+            }
+        }
     }
 
     func seek(to subtitle: SubtitleLine) {
@@ -224,6 +242,8 @@ final class WorkAudioPlayer: ObservableObject {
         failureObserver.map(NotificationCenter.default.removeObserver)
         itemStatusCancellable = nil
         playbackError = nil
+        activeSeekID &+= 1
+        isSeekingPlayer = false
         playbackState = autoPlay ? .preparing : .paused
         let item = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: item)
@@ -245,7 +265,7 @@ final class WorkAudioPlayer: ObservableObject {
         }
         subtitles = []
         currentSubtitleIndex = nil
-        player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        seekPlayer(to: position)
         savePlayback(force: true)
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
@@ -300,7 +320,7 @@ final class WorkAudioPlayer: ObservableObject {
     private func syncProgress() {
         guard !stopIfSleepTimerExpired() else { return }
         let seconds = player.currentTime().seconds
-        if seconds.isFinite, position != seconds {
+        if !isSeekingPlayer, seconds.isFinite, position != seconds {
             position = seconds
         }
         let itemDuration = player.currentItem?.duration.seconds
@@ -950,6 +970,8 @@ final class WorkAudioPlayer: ObservableObject {
         subtitles = [subtitle]
         pauseCurrent()
         seek(to: subtitle)
+        syncProgress()
+        assert(abs(position - 2) < 0.01, "Pending seek must not revert position on progress sync")
         try await Task.sleep(for: .milliseconds(500))
         assert(abs(position - 2) < 0.6 && currentSubtitle?.text == "视频字幕")
         loadCurrent(siblings: queue, autoPlay: false, resumePosition: 2.5)

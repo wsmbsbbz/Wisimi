@@ -262,15 +262,17 @@ private struct PlayerCoverContent: View {
 
 private struct PlayerProgress: View {
     @ObservedObject var player: WorkAudioPlayer
-    @State private var isSeeking = false
-    @State private var seekValue: TimeInterval = 0
+    @State private var dragPosition: TimeInterval?
+
+    private var displayedPosition: TimeInterval {
+        dragPosition ?? player.position
+    }
 
     private var value: Binding<Double> {
         Binding {
-            isSeeking ? seekValue : player.position
+            displayedPosition
         } set: { newValue in
-            seekValue = newValue
-            isSeeking = true
+            dragPosition = newValue
         }
     }
 
@@ -278,15 +280,18 @@ private struct PlayerProgress: View {
         VStack(spacing: 6) {
             Slider(value: value, in: 0...max(player.duration, 1)) { editing in
                 if editing {
-                    isSeeking = true
+                    if dragPosition == nil {
+                        dragPosition = player.position
+                    }
                 } else {
-                    player.seek(to: seekValue)
-                    isSeeking = false
+                    let target = dragPosition ?? player.position
+                    dragPosition = nil
+                    player.seek(to: target)
                 }
             }
 
             HStack {
-                Text((isSeeking ? seekValue : player.position).formattedDuration)
+                Text(displayedPosition.formattedDuration)
                 Spacer()
                 Text(player.duration.formattedDuration)
             }
