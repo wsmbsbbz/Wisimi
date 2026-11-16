@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 nonisolated struct LocalWorkMetadata: Codable, Sendable {
@@ -238,14 +239,14 @@ actor LocalWorkLibrary: WorkCatalog {
         }
     }
 
-    func importWork(_ plan: LocalImportPlan) throws -> LocalWorkEntry {
+    func importWork(_ plan: LocalImportPlan) async throws -> LocalWorkEntry {
         try prepareDirectory()
         let id = UUID()
         let staging = directory.appendingPathComponent(".import-\(id.uuidString)", isDirectory: true)
         let destination = staging.appendingPathComponent("files", isDirectory: true)
         defer { try? files.removeItem(at: staging) }
 
-        let manifest = try coordinatedRead(plan.source) { source in
+        let copiedManifest = try coordinatedRead(plan.source) { source in
             let scan = try scan(source, id: id)
             let volume = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityKey])
             if let available = volume?.volumeAvailableCapacity, Int64(available) < scan.bytes {
@@ -255,12 +256,14 @@ actor LocalWorkLibrary: WorkCatalog {
             try copy(scan.tracks, from: source, to: destination)
             return LocalWorkManifest(entry: scan.entry, tracks: scan.tracks)
         }
-        try JSONEncoder().encode(manifest).write(to: staging.appendingPathComponent("index.json"), options: .atomic)
+        let enriched = await enrichMissingDurations(in: copiedManifest, root: destination)
+        try Task.checkCancellation()
+        try JSONEncoder().encode(enriched.manifest).write(to: staging.appendingPathComponent("index.json"), options: .atomic)
         try Task.checkCancellation()
         try files.moveItem(at: staging, to: workDirectory(id))
-        catalog?.append(manifest.entry)
+        catalog?.append(enriched.manifest.entry)
         catalog?.sort(by: Self.newestFirst)
-        return manifest.entry
+        return enriched.manifest.entry
     }
 
     func remove(_ id: UUID) throws {
@@ -484,6 +487,97 @@ actor LocalWorkLibrary: WorkCatalog {
                              children: track.children.map { resolve($0, in: url) },
                              mediaStreamUrl: exists ? url.absoluteString : nil,
                              mediaDownloadUrl: nil, size: track.size)
+        }
+    }
+
+    private func enrichMissingDurations(
+        in manifest: LocalWorkManifest,
+        root: URL
+    ) async -> (manifest: LocalWorkManifest, changed: Bool) {
+        let targets = collectMissingDurationTargets(in: manifest.tracks, root: root)
+        guard !targets.isEmpty else { return (manifest, false) }
+
+        let loaded = await loadDurations(for: targets)
+        guard !loaded.isEmpty else { return (manifest, false) }
+
+        let updatedTracks = applyDurations(loaded, to: manifest.tracks)
+        var metadata = manifest.entry.metadata
+        if metadata.duration == nil {
+            let total = totalPlayableDuration(in: updatedTracks)
+            if total > 0 { metadata.duration = total }
+        }
+        let updatedEntry = manifest.entry.updating(
+            metadata: metadata,
+            needsDLsiteSync: manifest.entry.needsDLsiteSync,
+            warning: manifest.entry.metadataWarning
+        )
+        return (LocalWorkManifest(entry: updatedEntry, tracks: updatedTracks), true)
+    }
+
+    private func collectMissingDurationTargets(in tracks: [TrackNode], root: URL) -> [(id: String, url: URL)] {
+        var targets: [(id: String, url: URL)] = []
+        for track in tracks {
+            let url = root.appendingPathComponent(track.title)
+            if let children = track.children {
+                targets.append(contentsOf: collectMissingDurationTargets(in: children, root: url))
+            } else if track.isPlayable, track.duration == nil, files.fileExists(atPath: url.path) {
+                targets.append((track.id, url))
+            }
+        }
+        return targets
+    }
+
+    private func loadDurations(for targets: [(id: String, url: URL)]) async -> [String: Double] {
+        let maxConcurrency = 4
+        return await withTaskGroup(of: (String, Double?).self) { group in
+            var index = 0
+            for _ in 0..<min(maxConcurrency, targets.count) {
+                let target = targets[index]
+                index += 1
+                group.addTask { (target.id, await Self.readDuration(at: target.url)) }
+            }
+            var result: [String: Double] = [:]
+            while let (id, duration) = await group.next() {
+                if let duration { result[id] = duration }
+                if index < targets.count {
+                    let target = targets[index]
+                    index += 1
+                    group.addTask { (target.id, await Self.readDuration(at: target.url)) }
+                }
+            }
+            return result
+        }
+    }
+
+    nonisolated private static func readDuration(at url: URL) async -> Double? {
+        let asset = AVURLAsset(url: url)
+        guard let seconds = try? await asset.load(.duration).seconds,
+              seconds.isFinite, seconds > 0 else { return nil }
+        return seconds
+    }
+
+    private func applyDurations(_ durations: [String: Double], to tracks: [TrackNode]) -> [TrackNode] {
+        tracks.map { track in
+            let updatedDuration = track.duration ?? durations[track.id]
+            return TrackNode(
+                type: track.type,
+                title: track.title,
+                hash: track.hash,
+                duration: updatedDuration,
+                children: track.children.map { applyDurations(durations, to: $0) },
+                mediaStreamUrl: track.mediaStreamUrl,
+                mediaDownloadUrl: track.mediaDownloadUrl,
+                size: track.size
+            )
+        }
+    }
+
+    private func totalPlayableDuration(in tracks: [TrackNode]) -> Double {
+        tracks.reduce(0) { sum, track in
+            if let children = track.children {
+                return sum + totalPlayableDuration(in: children)
+            }
+            return sum + (track.isPlayable ? (track.duration ?? 0) : 0)
         }
     }
 }

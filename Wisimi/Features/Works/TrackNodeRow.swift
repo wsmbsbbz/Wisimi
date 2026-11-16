@@ -87,8 +87,8 @@ struct TrackNodeRow: View {
                     .font(.subheadline.weight(.medium))
                     .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
                     .multilineTextAlignment(.leading)
-                if track.isPlayable {
-                    Text(track.isVideo ? "视频 · \(track.durationText)" : track.durationText)
+                if track.isPlayable, let subtitle = playableSubtitle {
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -103,6 +103,13 @@ struct TrackNodeRow: View {
             .foregroundStyle(status.foregroundColor)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: typeSize.isAccessibilitySize ? nil : 92, alignment: .trailing)
+    }
+
+    private var playableSubtitle: String? {
+        if track.isVideo {
+            return track.duration == nil ? "视频" : "视频 · \(track.durationText)"
+        }
+        return track.duration == nil ? nil : track.durationText
     }
 
     private var iconName: String {

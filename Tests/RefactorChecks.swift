@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Combine
 import Security
@@ -123,6 +124,8 @@ struct RefactorChecks {
         assert(loaded.tracks.map(\.title) == ["Track 2", "Track 10"])
         let firstFolder = loaded.tracks[0].children!
         let firstTrack = firstFolder.playableTracks[0]
+        assert((firstTrack.duration ?? 0) > 0, "Imported local audio must populate track duration")
+        assert((loaded.work.duration ?? 0) > 0, "Imported local work without wisimi.json must sum track durations")
         assert(firstTrack.id != loaded.tracks[1].children?.playableTracks[0].id)
         assert(firstTrack.playbackURL?.isFileURL == true && files.fileExists(atPath: firstTrack.playbackURL!.path))
         let subtitle = firstFolder.matchingSubtitle(for: firstTrack)!
@@ -132,6 +135,14 @@ struct RefactorChecks {
         let textOnlySource = root.appendingPathComponent("文本台本作品")
         try files.createDirectory(at: textOnlySource, withIntermediateDirectories: true)
         try files.copyItem(at: URL(fileURLWithPath: "Tests/Fixtures/silence.mp3"), to: textOnlySource.appendingPathComponent("01.mp3"))
+        let wavURL = textOnlySource.appendingPathComponent("02.wav")
+        do {
+            let wavFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 44100, channels: 1, interleaved: true)!
+            let wavFile = try AVAudioFile(forWriting: wavURL, settings: wavFormat.settings, commonFormat: .pcmFormatInt16, interleaved: true)
+            let wavBuffer = AVAudioPCMBuffer(pcmFormat: wavFormat, frameCapacity: 44100)!
+            wavBuffer.frameLength = 44100
+            try wavFile.write(from: wavBuffer)
+        }
         try "台本内容".write(to: textOnlySource.appendingPathComponent("script.txt"), atomically: true, encoding: .utf8)
         try "1\n00:00:00,000 --> 00:00:01,000\n你好\n".write(to: textOnlySource.appendingPathComponent("01.srt"), atomically: true, encoding: .utf8)
         let textLibrary = LocalWorkLibrary(directory: root.appendingPathComponent("TextLibrary"), requiresSecurityScope: false)
@@ -140,6 +151,8 @@ struct RefactorChecks {
         let textOnlyImported = try await textLibrary.importWork(textOnlyPlan)
         let textOnlyLoaded = try await textSource.loadWork(.local(textOnlyImported.id))
         assert(textOnlyLoaded.work.hasSubtitle == false)
+        let wavNode = textOnlyLoaded.tracks.first { $0.title == "02.wav" }
+        assert((wavNode?.duration ?? 0) >= 0.9, "Imported local WAV must populate duration")
         let txtNode = textOnlyLoaded.tracks.first { $0.title == "script.txt" }
         let srtNode = textOnlyLoaded.tracks.first { $0.title == "01.srt" }
         assert(txtNode?.isReadableText == true && txtNode?.isSubtitle == false && txtNode?.textPreviewURL?.isFileURL == true)
