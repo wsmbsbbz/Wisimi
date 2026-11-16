@@ -107,8 +107,9 @@ struct LocalWorksView: View {
             triggerPendingDLsiteSync()
         }
         .fileImporter(isPresented: $showsPicker, allowedContentTypes: [.folder], onCompletion: inspectSelection)
-        .confirmationDialog("导入作品副本", isPresented: $confirmsImport, titleVisibility: .visible, presenting: plan) { plan in
+        .alert("导入作品副本", isPresented: $confirmsImport, presenting: plan) { plan in
             Button("复制并导入") { runImportTask("正在复制作品…") { try await importWork(plan) } }
+            Button("取消", role: .cancel) { self.plan = nil }
         } message: { plan in
             let size = ByteCountFormatter.string(fromByteCount: plan.bytes, countStyle: .file)
             Text("\(plan.title)预计占用 \(size)。导入后可离线播放，原文件会保留。")
