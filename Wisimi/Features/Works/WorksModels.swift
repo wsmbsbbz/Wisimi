@@ -184,7 +184,12 @@ nonisolated struct TrackNode: Codable, Identifiable, Sendable {
     var isAudio: Bool { type == "audio" && !isVideo }
     var isPlayable: Bool { isAudio || isVideo }
     var isFolder: Bool { type == "folder" }
+    private static let readableTextExtensions = [".txt", ".vtt", ".lrc", ".srt", ".md", ".log"]
+
     var isSubtitle: Bool { title.lowercased().hasSuffix(".vtt") || title.lowercased().hasSuffix(".lrc") }
+    var isReadableText: Bool {
+        !isFolder && Self.readableTextExtensions.contains { title.lowercased().hasSuffix($0) }
+    }
     var isImage: Bool {
         [".jpg", ".jpeg", ".png", ".webp", ".gif"].contains { title.lowercased().hasSuffix($0) }
     }
@@ -194,6 +199,10 @@ nonisolated struct TrackNode: Codable, Identifiable, Sendable {
     }
     var imagePreviewURL: URL? {
         guard isImage else { return nil }
+        return (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
+    }
+    var textPreviewURL: URL? {
+        guard isReadableText else { return nil }
         return (mediaStreamUrl ?? mediaDownloadUrl).flatMap(URL.init(string:))
     }
     var downloadSourceURL: URL? {
@@ -304,5 +313,41 @@ extension Array where Element == TrackNode {
             siblings = folder.children ?? []
         }
         return resolvedPath
+    }
+}
+
+enum TrackTextDecodeError: LocalizedError {
+    case fileTooLarge(limitBytes: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .fileTooLarge(let limitBytes):
+            return "文件超过 \(limitBytes / 1_000_000) MB，暂不支持预览。"
+        }
+    }
+}
+
+enum TrackTextDecoder {
+    static let defaultMaxBytes = 2_000_000
+
+    static func decode(_ data: Data, maxBytes: Int = defaultMaxBytes) throws -> String {
+        guard data.count <= maxBytes else {
+            throw TrackTextDecodeError.fileTooLarge(limitBytes: maxBytes)
+        }
+        if data.isEmpty { return "" }
+        if let utf8 = String(data: data, encoding: .utf8) {
+            return utf8
+        }
+        var converted: NSString?
+        let encoding = NSString.stringEncoding(
+            for: data,
+            encodingOptions: nil,
+            convertedString: &converted,
+            usedLossyConversion: nil
+        )
+        if encoding != 0, let text = converted as String? {
+            return text
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 }

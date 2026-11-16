@@ -99,7 +99,7 @@ struct WorkSource {
     }
 
     func subtitleText(at url: URL) async throws -> String {
-        if url.isFileURL { return try String(contentsOf: url, encoding: .utf8) }
+        if url.isFileURL { return try TrackTextDecoder.decode(Data(contentsOf: url)) }
         return try await online.client.fetchText(url)
     }
 }

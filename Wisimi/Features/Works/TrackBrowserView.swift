@@ -11,7 +11,7 @@ struct TrackBrowserView: View {
     var localWorkID: UUID? = nil
     var onOpenLocalLibrary: (() -> Void)? = nil
     var onDeleteEntries: (([DownloadEntry]) -> Void)? = nil
-    @State private var imagePreview: TrackImagePreview?
+    @State private var activePreview: TrackPreview?
     @State private var downloads = DownloadStore.shared
     @State private var isSelecting = false
     @State private var selection: Set<String> = []
@@ -213,9 +213,9 @@ struct TrackBrowserView: View {
                             downloads: downloads,
                             onDeleteEntries: onDeleteEntries,
                             openFolder: openFolder,
-                            previewImage: { item in
+                            previewItem: { item in
                                 if isSelecting { toggleSelection([item.node]) }
-                                else { previewImage(item) }
+                                else { previewItem(item, localEntry: localEntry) }
                             }
                         ) { node in
                             if isSelecting {
@@ -255,8 +255,13 @@ struct TrackBrowserView: View {
                 }
             }
         }
-        .sheet(item: $imagePreview) { preview in
-            ImagePreviewSheet(preview: preview)
+        .sheet(item: $activePreview) { preview in
+            switch preview {
+            case .image(_, let title, let url):
+                ImagePreviewSheet(title: title, url: url)
+            case .text(_, let title, let url):
+                TextReaderSheet(title: title, url: url)
+            }
         }
     }
 
@@ -412,9 +417,14 @@ struct TrackBrowserView: View {
         isPathMenuExpanded = false
     }
 
-    private func previewImage(_ item: TrackDisplayItem) {
-        guard let url = item.node.imagePreviewURL else { return }
-        imagePreview = TrackImagePreview(id: item.id, title: item.node.title, url: url)
+    private func previewItem(_ item: TrackDisplayItem, localEntry: DownloadEntry?) {
+        let localURL = localEntry.flatMap { downloads.localURL(for: $0) }
+            ?? onlineWork.flatMap { downloads.localURL(for: item.node, workID: $0.id) }
+        if item.node.isImage, let url = localURL ?? item.node.imagePreviewURL {
+            activePreview = .image(id: item.id, title: item.node.title, url: url)
+        } else if item.node.isReadableText, let url = localURL ?? item.node.textPreviewURL {
+            activePreview = .text(id: item.id, title: item.node.title, url: url)
+        }
     }
 
     private func pathID(through index: Int) -> String {
@@ -429,7 +439,7 @@ private struct TrackBrowserNode: View {
     let downloads: DownloadStore
     let onDeleteEntries: (([DownloadEntry]) -> Void)?
     let openFolder: (TrackNode) -> Void
-    let previewImage: (TrackDisplayItem) -> Void
+    let previewItem: (TrackDisplayItem) -> Void
     let playMedia: (TrackNode) -> Void
 
     var body: some View {
@@ -457,7 +467,7 @@ private struct TrackBrowserNode: View {
     private var action: (() -> Void)? {
         if item.node.isFolder { return { openFolder(item.node) } }
         if item.node.isPlayable, item.node.playbackURL != nil { return { playMedia(item.node) } }
-        if item.node.imagePreviewURL != nil { return { previewImage(item) } }
+        if item.node.imagePreviewURL != nil || item.node.textPreviewURL != nil { return { previewItem(item) } }
         return nil
     }
 }
@@ -523,7 +533,8 @@ private struct TrackNodeMenuModifier: ViewModifier {
 }
 
 private struct ImagePreviewSheet: View {
-    let preview: TrackImagePreview
+    let title: String
+    let url: URL
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -531,10 +542,10 @@ private struct ImagePreviewSheet: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                ZoomableRemoteImage(url: preview.url)
+                ZoomableRemoteImage(url: url)
                 .padding()
             }
-            .navigationTitle(preview.title)
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -543,6 +554,84 @@ private struct ImagePreviewSheet: View {
                     }
                 }
             }
+        }
+    }
+}
+
+private struct TextReaderSheet: View {
+    let title: String
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String?
+    @State private var errorMessage: String?
+    @State private var reloadToken = 0
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let text {
+                    ScrollView {
+                        Text(text.isEmpty ? "（空文件）" : text)
+                            .font(.body)
+                            .lineSpacing(6)
+                            .foregroundStyle(text.isEmpty ? .secondary : .primary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: 680, alignment: .leading)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                    }
+                } else if let errorMessage {
+                    ContentUnavailableView {
+                        Label("无法预览文本", systemImage: "doc.text")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("重试") {
+                            reloadToken += 1
+                        }
+                    }
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let text, !text.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) {
+                        ShareLink(item: text)
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .task(id: "\(url.absoluteString)-\(reloadToken)") {
+            await load()
+        }
+    }
+
+    private func load() async {
+        text = nil
+        errorMessage = nil
+        do {
+            let data: Data
+            if url.isFileURL {
+                data = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: url)
+                }.value
+            } else {
+                data = try await URLSession.shared.data(from: url).0
+            }
+            text = try await Task.detached(priority: .userInitiated) {
+                try TrackTextDecoder.decode(data)
+            }.value
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }
@@ -697,8 +786,14 @@ private struct TrackDisplayItem: Identifiable {
     let node: TrackNode
 }
 
-private struct TrackImagePreview: Identifiable {
-    let id: String
-    let title: String
-    let url: URL
+private enum TrackPreview: Identifiable {
+    case image(id: String, title: String, url: URL)
+    case text(id: String, title: String, url: URL)
+
+    var id: String {
+        switch self {
+        case .image(let id, _, _): "image-\(id)"
+        case .text(let id, _, _): "text-\(id)"
+        }
+    }
 }

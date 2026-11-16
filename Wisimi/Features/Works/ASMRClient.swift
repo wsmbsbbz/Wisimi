@@ -200,7 +200,7 @@ struct ASMRClient {
 
     func fetchText(_ url: URL) async throws -> String {
         let data = try await data(for: request(url: url))
-        return String(decoding: data, as: UTF8.self)
+        return try TrackTextDecoder.decode(data)
     }
 
     private func fetch<T: Decodable>(_ url: URL, token: String? = nil) async throws -> T {

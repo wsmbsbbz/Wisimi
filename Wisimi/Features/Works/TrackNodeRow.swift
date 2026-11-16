@@ -111,6 +111,7 @@ struct TrackNodeRow: View {
         if track.isAudio { return "play.circle" }
         if track.isSubtitle { return "captions.bubble" }
         if track.isImage { return "photo" }
+        if track.isReadableText { return "doc.text" }
         return "doc"
     }
 }

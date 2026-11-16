@@ -446,6 +446,8 @@ actor LocalWorkLibrary: WorkCatalog {
             case "lrc", "vtt":
                 type = "text"
                 scan.hasSubtitle = true
+            case "txt", "srt", "md", "log":
+                type = "text"
             case "jpg", "jpeg", "png", "webp", "gif":
                 type = "image"
                 scan.images.insert(path)

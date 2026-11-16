@@ -129,6 +129,40 @@ struct RefactorChecks {
         let text = try await source.subtitleText(at: subtitle.downloadSourceURL!)
         assert(text == "[00:00.00]本地字幕")
 
+        let textOnlySource = root.appendingPathComponent("文本台本作品")
+        try files.createDirectory(at: textOnlySource, withIntermediateDirectories: true)
+        try files.copyItem(at: URL(fileURLWithPath: "Tests/Fixtures/silence.mp3"), to: textOnlySource.appendingPathComponent("01.mp3"))
+        try "台本内容".write(to: textOnlySource.appendingPathComponent("script.txt"), atomically: true, encoding: .utf8)
+        try "1\n00:00:00,000 --> 00:00:01,000\n你好\n".write(to: textOnlySource.appendingPathComponent("01.srt"), atomically: true, encoding: .utf8)
+        let textLibrary = LocalWorkLibrary(directory: root.appendingPathComponent("TextLibrary"), requiresSecurityScope: false)
+        let textSource = WorkSource(online: OnlineWorkSource(client: ASMRClient()), library: textLibrary)
+        let textOnlyPlan = try await textLibrary.inspect(textOnlySource)
+        let textOnlyImported = try await textLibrary.importWork(textOnlyPlan)
+        let textOnlyLoaded = try await textSource.loadWork(.local(textOnlyImported.id))
+        assert(textOnlyLoaded.work.hasSubtitle == false)
+        let txtNode = textOnlyLoaded.tracks.first { $0.title == "script.txt" }
+        let srtNode = textOnlyLoaded.tracks.first { $0.title == "01.srt" }
+        assert(txtNode?.isReadableText == true && txtNode?.isSubtitle == false && txtNode?.textPreviewURL?.isFileURL == true)
+        assert(srtNode?.isReadableText == true && srtNode?.isSubtitle == false && srtNode?.textPreviewURL?.isFileURL == true)
+
+        assert((try? TrackTextDecoder.decode(Data())) == "")
+        let shiftJIS = Data("おやすみ".utf8)
+        assert((try? TrackTextDecoder.decode(shiftJIS)) == "おやすみ")
+        if let sjisData = "おやすみ".data(using: .shiftJIS) {
+            assert((try? TrackTextDecoder.decode(sjisData)) == "おやすみ")
+        }
+        let gbEncoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
+        if let gbData = "中文台本".data(using: gbEncoding) {
+            assert((try? TrackTextDecoder.decode(gbData)) == "中文台本")
+        }
+        var threwTooLarge = false
+        do {
+            _ = try TrackTextDecoder.decode(Data(repeating: 65, count: 16), maxBytes: 8)
+        } catch {
+            threwTooLarge = true
+        }
+        assert(threwTooLarge)
+
         let metadataURL = original.appendingPathComponent("wisimi.json")
         try Data(#"{"title":"注册标题","circle":"本地社团","duration":120,"rating":4.5,"sales":12,"catalogCode":"TEST-7","tags":["雨声","雨声"],"voiceActors":["测试声优"],"cover":"Track 2/封面.png"}"#.utf8).write(to: metadataURL)
         let registered = try await library.importWork(library.inspect(original))
