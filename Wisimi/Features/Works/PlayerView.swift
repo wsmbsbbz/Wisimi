@@ -334,10 +334,15 @@ private struct PlayerControls: View {
 private struct SubtitleListView: View {
     @ObservedObject var player: WorkAudioPlayer
     let hideSubtitles: () -> Void
-    @State private var isTouchingSubtitleList = false
+    @State private var scrollPhase: ScrollPhase = .idle
+    @State private var lastScrollEndedAt = Date.distantPast
     @State private var subtitleAutoScrollResumeAt = Date.distantPast
     @State private var subtitleInteractionToken = 0
     @State private var subtitleFrames: [UUID: CGRect] = [:]
+
+    private var isInteractingWithScrollView: Bool {
+        scrollPhase != .idle
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -362,18 +367,28 @@ private struct SubtitleListView: View {
                         }
                         .padding(.vertical, 18)
                     }
-                    .onScrollPhaseChange { _, phase in
-                        isTouchingSubtitleList = phase != .idle
+                    .onScrollPhaseChange { oldPhase, newPhase in
+                        scrollPhase = newPhase
+                        if oldPhase != .idle && newPhase == .idle {
+                            lastScrollEndedAt = Date()
+                        }
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(.rect)
             .coordinateSpace(.named("subtitle-list"))
-            .simultaneousGesture(SpatialTapGesture().onEnded { value in
-                guard !subtitleFrames.values.contains(where: { $0.contains(value.location) }) else { return }
-                hideSubtitles()
-            })
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.35)
+                    .exclusively(before: SpatialTapGesture())
+                    .onEnded { result in
+                        guard case .second(let value) = result else { return }
+                        guard !isInteractingWithScrollView,
+                              Date().timeIntervalSince(lastScrollEndedAt) > 0.15,
+                              !subtitleFrames.values.contains(where: { $0.contains(value.location) }) else { return }
+                        hideSubtitles()
+                    }
+            )
             .background(.thinMaterial, in: .rect(cornerRadius: 20))
             .overlay {
                 RoundedRectangle(cornerRadius: 20)
@@ -391,7 +406,7 @@ private struct SubtitleListView: View {
                 guard canAutoScrollToCurrentSubtitle else { return }
                 scrollToCurrentSubtitle(with: proxy)
             }
-            .onChange(of: isTouchingSubtitleList) {
+            .onChange(of: isInteractingWithScrollView) {
                 delaySubtitleAutoScroll()
             }
             .task(id: subtitleInteractionToken) {
@@ -401,7 +416,7 @@ private struct SubtitleListView: View {
     }
 
     private var canAutoScrollToCurrentSubtitle: Bool {
-        !isTouchingSubtitleList && Date() >= subtitleAutoScrollResumeAt
+        !isInteractingWithScrollView && Date() >= subtitleAutoScrollResumeAt
     }
 
     private func delaySubtitleAutoScroll() {
