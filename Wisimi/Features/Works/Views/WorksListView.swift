@@ -32,8 +32,8 @@ struct WorksListView: View {
 
     init() {
         #if DEBUG
-        let client = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]?.hasPrefix("similar") == true
-            ? DebugSimilarWorksFixture.client() : ASMRClient()
+        let debugConfig = DebugLaunchConfig.current
+        let client = debugConfig.makeClient()
         #else
         let client = ASMRClient()
         #endif
@@ -47,45 +47,23 @@ struct WorksListView: View {
         _player = StateObject(wrappedValue: player)
         _auth = StateObject(wrappedValue: AuthSession(client: client))
         #if DEBUG
-        let debugScreen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"]
-        if debugScreen?.hasPrefix("similar") == true {
-            _path = State(initialValue: [.detail(.asmrOne(DebugSimilarWorksFixture.workID))])
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SIMILAR_MINIPLAYER"] == "1" {
-                try? player.prepareDebugPlayback()
-            }
-        }
-        _isNarrationSettingsPresented = State(initialValue: debugScreen == "tts-settings" || debugScreen == "openrouter-credentials")
-        if debugScreen?.hasPrefix("download") == true,
-           ProcessInfo.processInfo.environment["WISIMI_DEBUG_DOWNLOAD_MINIPLAYER"] == "1" {
-            try? player.prepareDebugPlayback()
-        }
-        _showsLocalLibrary = State(initialValue: debugScreen == "local-library" || debugScreen == "tts-settings" || debugScreen == "local-detail" || debugScreen?.hasPrefix("downloads") == true || debugScreen == "download-local-detail")
-        if debugScreen == "local-detail",
-           let rawID = ProcessInfo.processInfo.environment["WISIMI_DEBUG_LOCAL_ID"],
-           let uuid = UUID(uuidString: rawID) {
-            _path = State(initialValue: [.detail(.local(uuid))])
-        }
-        if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" || debugScreen == "narration" {
-            try? player.prepareDebugPlayback()
-            if debugScreen == "narration" { try? player.prepareDebugNarrationPreview() }
-            if ProcessInfo.processInfo.environment["WISIMI_SLEEP_TIMER"] == "1" {
-                player.setSleepTimer(.deadline(.now.addingTimeInterval(1800)))
-            }
-            _path = State(initialValue: debugScreen != "mini-player" ? [.player] : [])
-        }
+        let debugState = debugConfig.configureInitialState(player: player)
+        _path = State(initialValue: debugState.path)
+        _showsLocalLibrary = State(initialValue: debugState.showsLocalLibrary)
+        _isNarrationSettingsPresented = State(initialValue: debugState.isNarrationSettingsPresented)
         #endif
     }
 
     @ViewBuilder var body: some View {
         #if DEBUG
         Group {
-            if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "work-actions" {
+            if DebugLaunchConfig.current.isWorkActionsPreview {
                 DebugWorkActionsPreview()
             } else {
                 browserContent
             }
         }
-        .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["WISIMI_DEBUG_LARGE_TEXT"] == "1" ? .accessibility3 : dynamicTypeSize)
+        .environment(\.dynamicTypeSize, DebugLaunchConfig.current.usesLargeText ? .accessibility3 : dynamicTypeSize)
         #else
         browserContent
         #endif
@@ -325,27 +303,11 @@ struct WorksListView: View {
 
     private func loadInitialContent() async {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "local-library" { return }
-        if let screen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"], screen.hasPrefix("download") {
-            do {
-                try await DownloadStore.shared.prepareDebugDownloads()
-                if screen == "download-local-detail", let saved = DownloadStore.shared.savedWork(id: 99999999) {
-                    path = [.detail(.local(saved.localWorkID))]
-                }
-            } catch { DownloadStore.shared.message = error.localizedDescription }
-            return
-        }
-        if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "list-error" {
-            let json = #"{"works":[{"id":1,"title":"晚安 · 轻声陪伴与耳边细语","name":"Wisimi","has_subtitle":true,"tags":[],"vas":[]}],"pagination":{"currentPage":1,"pageSize":12,"totalCount":36}}"#
-            await pageState.load(page: 1) {
-                try JSONDecoder().decode(WorksResponse.self, from: Data(json.utf8))
-            }
-            await pageState.load(page: 2) { throw URLError(.notConnectedToInternet) }
-            return
-        }
-        if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "video" {
-            do { try await player.prepareDebugVideoPlayback() }
-            catch { assertionFailure("Video preview failed: \(error)") }
+        if case .handled(let newPath) = await DebugLaunchConfig.current.handleInitialLoadIfNeeded(
+            pageState: pageState,
+            player: player
+        ) {
+            if let newPath { path = newPath }
             return
         }
         #endif
