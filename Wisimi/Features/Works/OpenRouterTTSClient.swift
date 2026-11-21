@@ -43,7 +43,7 @@ final class OpenRouterTTSClient: TTSProviderSynthesizing {
         }
     }
 
-    fileprivate static func makeRequest(for synthesis: TTSSynthesisRequest, credential: String) throws -> URLRequest {
+    static func makeRequest(for synthesis: TTSSynthesisRequest, credential: String) throws -> URLRequest {
         let body = OpenRouterSpeechRequest(
             input: mappedText(for: synthesis),
             model: synthesis.model.rawValue,
@@ -75,7 +75,7 @@ final class OpenRouterTTSClient: TTSProviderSynthesizing {
         }
     }
 
-    fileprivate static func error(for statusCode: Int, responseBody: Data? = nil) -> TTSSynthesisError {
+    static func error(for statusCode: Int, responseBody: Data? = nil) -> TTSSynthesisError {
         switch statusCode {
         case 401: .invalidCredential
         case 402: .insufficientCredit
@@ -109,7 +109,7 @@ final class OpenRouterTTSClient: TTSProviderSynthesizing {
         return try? Data(contentsOf: url)
     }
 
-    fileprivate static func finishDownload(from downloadURL: URL, to outputURL: URL) throws {
+    static func finishDownload(from downloadURL: URL, to outputURL: URL) throws {
         let manager = FileManager.default
         try manager.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if manager.fileExists(atPath: outputURL.path) { return }
@@ -129,7 +129,7 @@ final class OpenRouterTTSClient: TTSProviderSynthesizing {
         }
     }
 
-    fileprivate static func finishPCMDownloadAsWAV(from downloadURL: URL, to outputURL: URL) throws {
+    static func finishPCMDownloadAsWAV(from downloadURL: URL, to outputURL: URL) throws {
         let manager = FileManager.default
         try manager.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if manager.fileExists(atPath: outputURL.path) { return }
@@ -230,77 +230,4 @@ private struct OpenRouterErrorEnvelope: Decodable {
     let error: ErrorPayload
 }
 
-#if DEBUG
-@MainActor
-enum OpenRouterTTSSelfCheck {
-    static func run() {
-        let request = TTSSynthesisRequest(model: .geminiFlashPreview, voiceID: "Kore", text: "晚安", speechRate: 1.2, expression: .whisper)
-        let urlRequest = try? OpenRouterTTSClient.makeRequest(for: request, credential: "redacted-self-check")
-        let body = urlRequest?.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        assert(urlRequest?.url?.path == "/api/v1/audio/speech")
-        assert(body?["model"] as? String == TTSModelID.geminiFlashPreview.rawValue)
-        assert(body?["voice"] as? String == "Kore")
-        assert(body?["response_format"] as? String == "pcm")
-        assert(body?["speed"] == nil)
-        assert((body?["input"] as? String)?.hasPrefix("[whispers]") == true)
-        assert(Set(body?.keys.map { $0 } ?? []) == ["input", "model", "voice", "response_format"])
 
-        let minimaxRequest = TTSSynthesisRequest(model: .minimaxTurbo, voiceID: "female-shaonv", text: "晚安，请休息", speechRate: 1.2, expression: .automatic, inlineEffect: .breath)
-        let minimaxURLRequest = try? OpenRouterTTSClient.makeRequest(for: minimaxRequest, credential: "redacted-self-check")
-        let minimaxBody = minimaxURLRequest?.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        assert(Set(minimaxBody?.keys.map { $0 } ?? []) == ["input", "model", "voice", "response_format", "speed"])
-        assert(minimaxBody?["speed"] as? Double == 1.2)
-        assert(minimaxBody?["input"] as? String == "晚安，(breath)请休息")
-        assert(minimaxBody?["response_format"] as? String == "mp3")
-        assert(minimaxBody?["provider"] == nil)
-
-        let staleVoiceRequest = TTSSynthesisRequest(model: .geminiFlashPreview, voiceID: "female-shaonv", text: "晚安", speechRate: 1.2, expression: .gentle)
-        let staleVoiceURLRequest = try? OpenRouterTTSClient.makeRequest(for: staleVoiceRequest, credential: "redacted-self-check")
-        let staleVoiceBody = staleVoiceURLRequest?.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        assert(staleVoiceBody?["voice"] as? String == TTSModelID.geminiFlashPreview.defaultVoiceID)
-        assert(staleVoiceBody?["input"] as? String == "晚安")
-        assert(OpenRouterTTSClient.error(for: 401) == .invalidCredential)
-        assert(OpenRouterTTSClient.error(for: 402) == .insufficientCredit)
-        assert(OpenRouterTTSClient.error(for: 429) == .rateLimited)
-        assert(OpenRouterTTSClient.error(for: 503).isTransient)
-        let voiceError = Data(#"{"error":{"message":"Voice is not supported"}}"#.utf8)
-        let formatError = Data(#"{"error":{"message":"Invalid response_format"}}"#.utf8)
-        assert(OpenRouterTTSClient.error(for: 400, responseBody: voiceError) == .invalidVoice)
-        assert(OpenRouterTTSClient.error(for: 422, responseBody: formatError) == .unsupportedAudioFormat)
-
-        let source = FileManager.default.temporaryDirectory.appendingPathComponent("openrouter-fixture-\(UUID().uuidString).pcm")
-        let destination = FileManager.default.temporaryDirectory.appendingPathComponent("openrouter-fixture-finished-\(UUID().uuidString).wav")
-        defer {
-            try? FileManager.default.removeItem(at: source)
-            try? FileManager.default.removeItem(at: destination)
-        }
-        do {
-            let fixture = Data([0x01, 0x00, 0x02, 0x00])
-            try fixture.write(to: source, options: .atomic)
-            try OpenRouterTTSClient.finishPCMDownloadAsWAV(from: source, to: destination)
-            let wav = try Data(contentsOf: destination)
-            assert(String(decoding: wav.prefix(4), as: UTF8.self) == "RIFF")
-            assert(String(decoding: wav[8..<12], as: UTF8.self) == "WAVE")
-            assert(wav.count == 44 + fixture.count)
-            assert(wav.suffix(fixture.count) == fixture)
-            assert(TTSCache.containsValidAudio(at: destination))
-        } catch {
-            assertionFailure("OpenRouter PCM fixture self-check failed")
-        }
-
-        let invalidMP3Source = FileManager.default.temporaryDirectory.appendingPathComponent("openrouter-invalid-\(UUID().uuidString).mp3")
-        let invalidMP3Destination = FileManager.default.temporaryDirectory.appendingPathComponent("openrouter-invalid-finished-\(UUID().uuidString).mp3")
-        defer {
-            try? FileManager.default.removeItem(at: invalidMP3Source)
-            try? FileManager.default.removeItem(at: invalidMP3Destination)
-        }
-        do {
-            try Data("not an mp3".utf8).write(to: invalidMP3Source)
-            try OpenRouterTTSClient.finishDownload(from: invalidMP3Source, to: invalidMP3Destination)
-            assertionFailure("Invalid MP3 fixture must be rejected")
-        } catch {
-            assert(!FileManager.default.fileExists(atPath: invalidMP3Destination.path))
-        }
-    }
-}
-#endif

@@ -47,11 +47,55 @@ jobs:
           xcodebuild -version | grep -q '^Xcode 27\.'
           xcodebuild -showsdks | grep -Eq 'iphoneos27\.[0-9]+'
 
-      - name: Verify behavior and coverage
+      - name: Run unit and integration tests with coverage
         run: |
-          sh scripts/check-state.sh
-          sh scripts/check-downloads.sh
-          bash scripts/check-refactor.sh
+          rm -rf "$RUNNER_TEMP/TestResult.xcresult"
+          xcodebuild test \
+            -project Wisimi.xcodeproj \
+            -scheme Wisimi \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedDataTest" \
+            -parallel-testing-enabled NO \
+            -enableCodeCoverage YES \
+            -resultBundlePath "$RUNNER_TEMP/TestResult.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Enforce core module coverage gate
+        run: |
+          xcrun xccov view --report --json "$RUNNER_TEMP/TestResult.xcresult" | python3 -c '
+          import json, os, sys
+          required = {
+              "TTSCoordinator.swift",
+              "WorksBrowserState.swift",
+              "WorksNavigation.swift",
+              "SimilarWorksState.swift",
+              "PlaylistCatalog.swift",
+              "PlaylistMembershipState.swift",
+              "WorkDetailPageState.swift",
+              "KeychainItem.swift",
+              "TTSMixSettings.swift",
+              "OpenRouterTokenStore.swift",
+          }
+          report = json.load(sys.stdin)
+          files = {
+              os.path.basename(f["path"]): f["lineCoverage"]
+              for target in report.get("targets", [])
+              if target.get("name") == "Wisimi.app"
+              for f in target.get("files", [])
+          }
+          missing = sorted(required - set(files))
+          failed = [f"{name}: missing from coverage report" for name in missing]
+          for name in sorted(required & set(files)):
+              cov = files[name] * 100
+              if cov < 80:
+                  failed.append(f"{name}: line coverage {cov:.2f}% < 80%")
+          if failed:
+              print("\n".join(failed), file=sys.stderr)
+              sys.exit(1)
+          print("Coverage gate passed: all core modules have >=80% line coverage")
+          '
 
       - name: Build unsigned app
         run: |

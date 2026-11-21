@@ -172,57 +172,6 @@ final class TTSMixSettings: ObservableObject {
     }
 }
 
-#if DEBUG
-@MainActor
-enum TTSMixSettingsSelfCheck {
-    static func run() {
-        let suite = "TTSMixSettingsSelfCheck-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else {
-            assertionFailure("Could not create test defaults")
-            return
-        }
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let settings = TTSMixSettings(defaults: defaults)
-        assert(settings.isEnabled == false)
-        assert(settings.volume == 0.5)
-        assert(settings.maxSpeechRate == 1.25)
-        assert(settings.model == .edge)
-        assert(settings.voiceID == TTSModelID.edge.defaultVoiceID)
-        assert(settings.expressionPreset == .automatic)
-        assert(settings.inlineEffectPreset == .automatic)
-
-        settings.isEnabled = true
-        settings.volume = 2
-        settings.maxSpeechRate = 0.5
-        assert(settings.volume == 1)
-        assert(settings.maxSpeechRate == 1)
-        settings.maxSpeechRate = 2
-        assert(settings.maxSpeechRate == 1.25)
-        settings.model = .minimaxHD
-        settings.maxSpeechRate = 0.5
-        settings.inlineEffectPreset = .breath
-        assert(settings.maxSpeechRate == 0.5)
-        assert(settings.synthesisRequest(text: "晚安，请休息").inlineEffect == .breath)
-        settings.maxSpeechRate = 3
-        assert(settings.maxSpeechRate == 2)
-        settings.model = .geminiFlashPreview
-        settings.expressionPreset = .gentle
-        assert(settings.expressionPreset == .automatic)
-        assert(settings.inlineEffectPreset == .automatic)
-        assert(settings.synthesisRequest(text: "晚安").speechRate == 1)
-        assert(settings.synthesisRequest(text: "晚安").voiceID == TTSModelID.geminiFlashPreview.defaultVoiceID)
-
-        let restored = TTSMixSettings(defaults: defaults)
-        assert(restored.isEnabled == true)
-        assert(restored.volume == 1)
-        assert(restored.maxSpeechRate == 1)
-        assert(restored.model == .geminiFlashPreview)
-        assert(restored.voiceID == TTSModelID.geminiFlashPreview.defaultVoiceID)
-    }
-}
-#endif
-
 enum OpenRouterConnectionTestState: Equatable {
     case idle
     case testing

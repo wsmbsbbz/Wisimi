@@ -347,7 +347,7 @@ final class WorkAudioPlayer: ObservableObject {
         }
     }
 
-    fileprivate static func currentSubtitleIndex(at position: TimeInterval, in subtitles: [SubtitleLine]) -> Int? {
+    static func currentSubtitleIndex(at position: TimeInterval, in subtitles: [SubtitleLine]) -> Int? {
         subtitles.lastIndex { position >= $0.start }
     }
 
@@ -484,7 +484,7 @@ final class WorkAudioPlayer: ObservableObject {
         loadCurrent(siblings: context.siblings, autoPlay: false, resumePosition: snapshot.position)
     }
 
-    fileprivate static func playbackContext(for trackID: String, in nodes: [TrackNode]) -> (queue: [TrackNode], siblings: [TrackNode], index: Int)? {
+    static func playbackContext(for trackID: String, in nodes: [TrackNode]) -> (queue: [TrackNode], siblings: [TrackNode], index: Int)? {
         let queue = nodes.playableTracks
         if let index = queue.firstIndex(where: { $0.id == trackID }) {
             return (queue, nodes, index)
@@ -665,7 +665,7 @@ final class WorkAudioPlayer: ObservableObject {
         synthesis.cancelPending()
     }
 
-    fileprivate static func prefetchIndices(after index: Int, subtitleCount: Int) -> [Int] {
+    static func prefetchIndices(after index: Int, subtitleCount: Int) -> [Int] {
         guard subtitleCount > 0 else { return [] }
         let start = index + 1
         guard start < subtitleCount else { return [] }
@@ -1095,7 +1095,7 @@ final class WorkAudioPlayer: ObservableObject {
     }
     #endif
 
-    fileprivate static func parseSubtitles(_ content: String) -> [SubtitleLine] {
+    static func parseSubtitles(_ content: String) -> [SubtitleLine] {
         content.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("WEBVTT")
             ? parseVTT(content)
             : parseLRC(content)
@@ -1198,39 +1198,6 @@ private extension String {
 private extension AVAudioSessionPortDescription {
     var isDisconnectableAudioOutput: Bool {
         [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .headphones].contains(portType)
-    }
-}
-#endif
-
-#if DEBUG
-enum AudioPlayerSelfCheck {
-    static func run() {
-        let vtt = """
-        WEBVTT
-
-        00:00:01.000 --> 00:00:02.500
-        hello
-
-        00:00:04.000 --> 00:00:05.000
-        next
-        """
-        let lrc = "[00:01.50]hello\n[00:03.00]next"
-
-        assert(WorkAudioPlayer.parseSubtitles(vtt).first?.start == 1)
-        assert(WorkAudioPlayer.currentSubtitleIndex(at: 3.5, in: WorkAudioPlayer.parseSubtitles(vtt)) == 0)
-        let lines = WorkAudioPlayer.parseSubtitles(lrc)
-        assert(lines.count == 2)
-        assert(lines[0].end == 3)
-        assert(WorkAudioPlayer.currentSubtitleIndex(at: 2.9, in: lines) == 0)
-        assert(WorkAudioPlayer.prefetchIndices(after: 0, subtitleCount: 10) == [1, 2, 3, 4, 5])
-        assert(WorkAudioPlayer.prefetchIndices(after: 8, subtitleCount: 10) == [9])
-        assert(WorkAudioPlayer.prefetchIndices(after: 9, subtitleCount: 10).isEmpty)
-
-        let tracksJSON = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"a","duration":10,"mediaDownloadUrl":"https://example.com/a.mp3"},{"type":"audio","title":"02.mp3","hash":"b","duration":20,"mediaDownloadUrl":"https://example.com/b.mp3"}]}]"#
-        let tracks = (try? JSONDecoder().decode([TrackNode].self, from: Data(tracksJSON.utf8))) ?? []
-        let context = WorkAudioPlayer.playbackContext(for: "b", in: tracks)
-        assert(context?.queue.count == 2)
-        assert(context?.index == 1)
     }
 }
 #endif

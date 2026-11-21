@@ -11,16 +11,4 @@ enum SleepTimer: Equatable {
     }
 }
 
-#if DEBUG
-enum SleepTimerSelfCheck {
-    static func run() {
-        let deadline = Date(timeIntervalSince1970: 100)
-        let timer = SleepTimer.deadline(deadline)
-        assert(!timer.hasExpired(at: deadline.addingTimeInterval(-1)))
-        assert(timer.hasExpired(at: deadline))
-        assert(timer.hasExpired(at: deadline.addingTimeInterval(1)))
-        assert(!SleepTimer.off.hasExpired(at: deadline))
-        assert(!SleepTimer.endOfTrack.hasExpired(at: deadline))
-    }
-}
-#endif
+

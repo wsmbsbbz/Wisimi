@@ -326,21 +326,6 @@ struct WorksListView: View {
     private func loadInitialContent() async {
         #if DEBUG
         if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "local-library" { return }
-        if let mp3 = ProcessInfo.processInfo.environment["WISIMI_LOCAL_MEDIA_CHECKS"] {
-            do { try await player.runLocalMediaChecks(mp3: URL(fileURLWithPath: mp3)) }
-            catch { assertionFailure("Local media checks failed: \(error)") }
-            return
-        }
-        if ProcessInfo.processInfo.environment["WISIMI_NARRATION_CHECKS"] == "1" {
-            do { try await player.runNarrationChecks() }
-            catch { assertionFailure("Narration checks failed: \(error)") }
-            return
-        }
-        if ProcessInfo.processInfo.environment["WISIMI_DOWNLOAD_PLAYBACK_CHECKS"] == "1" {
-            do { try await player.runDownloadedMediaCheck() }
-            catch { assertionFailure("Downloaded media check failed: \(error)") }
-            return
-        }
         if let screen = ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"], screen.hasPrefix("download") {
             do {
                 try await DownloadStore.shared.prepareDebugDownloads()
@@ -358,23 +343,9 @@ struct WorksListView: View {
             await pageState.load(page: 2) { throw URLError(.notConnectedToInternet) }
             return
         }
-        if ProcessInfo.processInfo.environment["WISIMI_WORKS_CHECKS"] == "1" {
-            await WorksPageStateSelfCheck.run()
-            return
-        }
-        if ProcessInfo.processInfo.environment["WISIMI_VIDEO_CHECKS"] == "1" {
-            do { try await player.runVideoChecks() }
-            catch { assertionFailure("Video checks failed: \(error)") }
-            return
-        }
         if ProcessInfo.processInfo.environment["WISIMI_DEBUG_SCREEN"] == "video" {
             do { try await player.prepareDebugVideoPlayback() }
             catch { assertionFailure("Video preview failed: \(error)") }
-            return
-        }
-        if ProcessInfo.processInfo.environment["WISIMI_PLAYBACK_CHECKS"] == "1" {
-            do { try await player.runPlaybackChecks() }
-            catch { assertionFailure("Playback checks failed: \(error)") }
             return
         }
         #endif

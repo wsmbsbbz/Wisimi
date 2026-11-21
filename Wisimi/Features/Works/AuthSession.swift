@@ -55,13 +55,4 @@ struct AuthUser: Codable {
     let recommenderUuid: String?
 }
 
-#if DEBUG
-enum AuthSelfCheck {
-    static func run() {
-        let json = #"{"token":"abc","user":{"name":"demo","loggedIn":true,"recommenderUuid":"uuid"}}"#
-        let auth = try? JSONDecoder().decode(AuthResponse.self, from: Data(json.utf8))
-        assert(auth?.token == "abc")
-        assert(auth?.user?.recommenderUuid == "uuid")
-    }
-}
-#endif
+

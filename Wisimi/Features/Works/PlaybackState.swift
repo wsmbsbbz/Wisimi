@@ -17,22 +17,4 @@ enum PlaybackState: Equatable {
     }
 }
 
-#if DEBUG
-enum PlaybackStateSelfCheck {
-    static func run() {
-        var state = PlaybackState.paused.receiving(.play)
-        assert(state == .preparing && state.wantsPlayback)
-        state = state.receiving(.pause).receiving(.outputStarted)
-        assert(state == .paused)
-        state = state.receiving(.play).receiving(.pause).receiving(.play)
-        assert(state.wantsPlayback)
-        state = state.receiving(.outputStarted)
-        assert(state == .playing)
-        assert(state.receiving(.waiting) == .preparing)
-        assert(PlaybackState.paused.receiving(.waiting) == .paused)
-        for event in [PlaybackState.Event.pause, .activationFailed, .ended, .failed] {
-            assert(state.receiving(event) == .paused)
-        }
-    }
-}
-#endif
+

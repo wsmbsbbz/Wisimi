@@ -53,19 +53,6 @@ enum WorksFilterContext: Equatable {
     }
 }
 
-enum WorksFilterContextSelfCheck {
-    static func run() {
-        assert(WorksFilterContext.resolve(isSearchActive: true, mode: .favorites) == .works)
-        assert(WorksFilterContext.resolve(isSearchActive: true, mode: .playlists) == .works)
-        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .favorites) == .favorites)
-        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .playlists) == .playlists)
-        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .latest) == .works)
-        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .popular) == .works)
-        assert(WorksFilterContext.resolve(isSearchActive: false, mode: .recommended) == .works)
-    }
-}
-
-
 nonisolated enum WorkReference: Hashable, Sendable {
     case asmrOne(Int)
     case local(UUID)
@@ -89,15 +76,5 @@ enum WorksRoute: Hashable {
         guard path.last == .player else { return path }
         let previousPath = path.dropLast()
         return previousPath.last == .detail(workID) ? Array(previousPath) : previousPath + [.detail(workID)]
-    }
-}
-
-enum WorksNavigationSelfCheck {
-    static func run() {
-        let online = WorkReference.asmrOne(1)
-        let local = WorkReference.local(UUID())
-        assert(WorksRoute.replacingPlayer(withDetail: online, in: [.player]) == [.detail(online)])
-        assert(WorksRoute.replacingPlayer(withDetail: online, in: [.detail(online), .player]) == [.detail(online)])
-        assert(WorksRoute.replacingPlayer(withDetail: local, in: [.detail(online), .player]) == [.detail(online), .detail(local)])
     }
 }

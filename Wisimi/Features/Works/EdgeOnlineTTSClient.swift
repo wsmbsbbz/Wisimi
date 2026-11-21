@@ -95,11 +95,11 @@ final class EdgeOnlineTTSClient {
             "\(payload)\r\n"
     }
 
-    fileprivate static func ssmlRate(for speechRate: Double) -> Int {
+    static func ssmlRate(for speechRate: Double) -> Int {
         min(max(Int(((speechRate - 1) * 100).rounded()), 0), 25)
     }
 
-    fileprivate static func ssmlMessage(requestID: String, text: String, speechRate: Double) -> String {
+    static func ssmlMessage(requestID: String, text: String, speechRate: Double) -> String {
         let rate = ssmlRate(for: speechRate)
         let ssml =
             "<speak version=\"1.0\" " +
@@ -117,7 +117,7 @@ final class EdgeOnlineTTSClient {
             ssml
     }
 
-    fileprivate static func audioPayload(from frame: Data) -> Data? {
+    static func audioPayload(from frame: Data) -> Data? {
         if frame.count > 2 {
             let headerLength = Int(frame[frame.startIndex]) * 256 + Int(frame[frame.index(after: frame.startIndex)])
             let payloadStart = headerLength + 2
@@ -207,29 +207,4 @@ enum EdgeOnlineTTSError: LocalizedError {
     }
 }
 
-#if DEBUG
-enum EdgeOnlineTTSSelfCheck {
-    static func run() {
-        let payload = Data([1, 2, 3])
-        let header = Data("Path:audio\r\nX:1".utf8)
-        var binaryFrame = Data([UInt8(header.count / 256), UInt8(header.count % 256)])
-        binaryFrame.append(header)
-        binaryFrame.append(payload)
-        assert(EdgeOnlineTTSClient.audioPayload(from: binaryFrame) == payload)
 
-        let crlfFrame = Data("Path:audio\r\n\r\nabc".utf8)
-        assert(EdgeOnlineTTSClient.audioPayload(from: crlfFrame) == Data("abc".utf8))
-
-        let nonAudioFrame = Data("Path:turn.end\r\n\r\n".utf8)
-        assert(EdgeOnlineTTSClient.audioPayload(from: nonAudioFrame) == nil)
-        assert(EdgeOnlineTTSClient.ssmlRate(for: 1.0) == 0)
-        assert(EdgeOnlineTTSClient.ssmlRate(for: 1.25) == 25)
-        assert(EdgeOnlineTTSClient.cacheURL(for: "hello", speechRate: 1.0) != EdgeOnlineTTSClient.cacheURL(for: "hello", speechRate: 1.25))
-        assert(EdgeOnlineTTSClient.ssmlMessage(requestID: "id", text: "hello", speechRate: 1.25).contains("rate=\"+25%\""))
-        assert(EdgeSpeechSignature.token(at: 1_700_000_000) == "2CD23A2CA0B2595A-F3C846C370E05F9CC83ACC5F995C5F5D87A4D0F14CE8936A0F902E64099E38A2")
-        assert(EdgeSpeechSignature.token(at: 1_791_907_200) == "15F3FF629419C5C3-25518D01D8A232E310AF58C808C2B58F6FF62947805FB0F70E013DDA9E88D169")
-        assert(EdgeSpeechSignature.token(at: 1_791_907_499) == EdgeSpeechSignature.token(at: 1_791_907_200))
-        assert(EdgeSpeechSignature.token(at: 1_791_907_500) == "C9D9CBAF94BE118A-2DDDC327EE532F5937C271B3010E916D04F12E19E00586E8E98938789716A033")
-    }
-}
-#endif

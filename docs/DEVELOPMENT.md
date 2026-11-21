@@ -21,40 +21,34 @@ xcodebuild -project Wisimi.xcodeproj -scheme Wisimi -configuration Debug -sdk ip
 
 ## 自动化验证与覆盖率
 
-仓库提供不依赖网络的离线回归脚本，覆盖状态管理、下载管线和核心重构模块：
+项目使用 `WisimiTests`（基于 Swift Testing）运行单元测试与集成测试，测试均运行在隔离目录、内存 Stub 和 `URLProtocol` Mock 下，不调用远程接口，不产生付费 TTS 请求：
 
 ```sh
-sh scripts/check-state.sh
-sh scripts/check-downloads.sh
-bash scripts/check-refactor.sh
+xcodebuild test \
+  -project Wisimi.xcodeproj \
+  -scheme Wisimi \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -enableCodeCoverage YES
 ```
 
-各脚本职责如下：
+测试套件涵盖：
+- **`ModelsAndDecodingTests`**：模型解码、轨道分类、客户端请求构造与路由解析。
+- **`StateAndTimerTests`**：播放状态机、睡眠定时器、列表/详情/相似作品/播放列表竞态与取消。
+- **`TTSTests`**：TTS 混音配置、缓存指纹、Edge/OpenRouter 请求校验、回退策略与 Keychain 凭据存储。
+- **`LocalLibraryAndDownloadTests`**：本地作品导入、DLsite 元数据同步、文本解码与下载队列生命周期。
+- **`AudioPlayerIntegrationTests`**：字幕解析、旁白截止、MP4 播放与睡眠定时器集成验证。
 
-- **`scripts/check-state.sh`**：验证播放状态与列表请求竞态逻辑。
-- **`scripts/check-downloads.sh`**：使用本机 HTTP 服务验证嵌套目录、字幕附带、去重、响应与完整性校验、同作品合并、暂停继续、失败重试、持久化恢复及删除。
-- **`scripts/check-refactor.sh`**：使用本地音频样本、URLSession 测试响应和隔离 Keychain 项，验证旁白缓存与回退、列表请求、播放列表编辑、详情加载与标记竞态、配置归一化、凭据错误路径，以及本地作品导入/元信息/同名轨道/字幕路径/取消和删除。测试不调用远程 TTS，不产生付费请求。脚本会使用 LLVM 对九个核心重构模块分别统计行、函数与区域覆盖率，均强制不低于 **80%**（该统计不代表整个应用的 UI 覆盖率）。
+CI 流水线通过 `xcrun xccov` 对核心逻辑模块强制校验 **≥ 80%** 的行覆盖率门禁。
 
 ## 调试入口与离线界面夹具
 
-以下命令参数与环境变量仅在 `Debug` 构建生效，建议在隔离的模拟器中配合验收脚本使用。
-
-### 集成自检开关
-
-| 环境变量 | 说明 |
-| --- | --- |
-| `WISIMI_PLAYBACK_CHECKS=1` | 运行本地音频播放与睡眠定时器集成自检 |
-| `WISIMI_WORKS_CHECKS=1` | 运行列表请求竞态自检 |
-| `WISIMI_VIDEO_CHECKS=1` | 运行本机生成的 H.264 + AAC MP4 集成自检（真实解码、混合队列、画面绑定、字幕跳转、重试及定时停止） |
-| `WISIMI_DOWNLOAD_PLAYBACK_CHECKS=1` | 验证本地下载 MP4 的真实解码与本地字幕 |
-| `WISIMI_NARRATION_CHECKS=1` | 验证旁白截止任务取消及换曲状态复位 |
-| `WISIMI_LOCAL_MEDIA_CHECKS=<path>` | 指定模拟器容器内 `Tests/Fixtures/silence.mp3` 副本的绝对路径，运行本地 MP4/CAF、VTT/LRC、缓存旁白、恢复和删除自检 |
+以下环境变量仅在 `Debug` 构建生效，用于在模拟器中快速拉起特定界面状态以验收多设备布局。
 
 ### 离线界面夹具（`WISIMI_DEBUG_SCREEN`）
 
 | `WISIMI_DEBUG_SCREEN` 值 | 用途 | 可选叠加变量 |
 | --- | --- | --- |
-| `local-library` | 直接进入本地作品库 | `WISIMI_LOCAL_MEDIA_CHECKS` |
+| `local-library` | 直接进入本地作品库 | — |
 | `player` / `mini-player` | 播放器与迷你播放器预览 | `WISIMI_SLEEP_TIMER=1`（显示活动睡眠定时器） |
 | `video` | 本地视频播放器界面验证 | — |
 | `narration` | 长中文、无空格英文和显式换行的离线字幕夹具（不调用远程 TTS） | `WISIMI_DEBUG_NARRATION_STATE=enabled`（显示正常混音状态） |

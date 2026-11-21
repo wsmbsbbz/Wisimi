@@ -53,26 +53,4 @@ enum OpenRouterTokenStoreError: LocalizedError {
     }
 }
 
-#if DEBUG
-enum OpenRouterTokenStoreSelfCheck {
-    static func run() {
-        let store = OpenRouterTokenStore(service: "wisimi.openrouter.self-check.\(UUID().uuidString)")
-        defer { try? store.delete() }
-        assert(store.isConfigured == false)
-        do {
-            try store.save("self-check-first")
-            assert(store.isConfigured)
-            try store.save("self-check-replaced")
-            assert(store.isConfigured)
-            try store.delete()
-            assert(store.isConfigured == false)
-        } catch OpenRouterTokenStoreError.keychain(let status) where status == errSecMissingEntitlement {
-            // Unsigned simulator builds do not have an application identifier or
-            // Keychain access group. Signed builds still exercise the integration.
-            return
-        } catch {
-            assertionFailure("OpenRouter Keychain self-check failed")
-        }
-    }
-}
-#endif
+

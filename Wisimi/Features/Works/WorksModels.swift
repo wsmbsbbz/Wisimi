@@ -266,40 +266,6 @@ nonisolated struct FlexibleID: Codable, Hashable, Sendable {
     }
 }
 
-#if DEBUG
-enum DecodeSelfCheck {
-    static func run() {
-        let decoder = JSONDecoder()
-        let list = #"{"works":[{"id":1,"title":"Work","name":"Circle","duration":90,"rate_average_2dp":4.8,"has_subtitle":true,"thumbnailCoverUrl":"https://example.com/a.jpg","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}],"pagination":{"currentPage":1,"pageSize":20,"totalCount":42}}"#
-        let playlistWorks = #"{"works":[{"id":1172778,"title":"Work","name":"Circle","duration":11539,"rate_average_2dp":4.85,"has_subtitle":false,"thumbnailCoverUrl":"https://example.com/cover.jpg","tags":[{"id":68,"name":"淫语"}],"vas":[{"id":"va","name":"天知遥"}]}],"pagination":{"page":1,"pageSize":12,"totalCount":1}}"#
-        let playlists = #"{"playlists":[{"id":"playlist-id","name":"Playlist","privacy":0,"description":"probe","works_count":1,"exist":true}],"pagination":{"page":1,"pageSize":12,"totalCount":1}}"#
-        let detail = #"{"id":1,"title":"Work","name":"Circle","duration":90,"dl_count":2,"rate_average_2dp":4.8,"has_subtitle":true,"mainCoverUrl":"https://example.com/a.jpg","progress":"marked","tags":[{"id":1,"name":"耳かき"}],"vas":[{"id":"va","name":"声优"}]}"#
-        let tracks = #"[{"type":"folder","title":"root","children":[{"type":"audio","title":"01.mp3","hash":"1/1","duration":12.4,"mediaDownloadUrl":"https://example.com/01.mp3"},{"type":"text","title":"01.vtt","mediaDownloadUrl":"https://example.com/01.vtt"},{"type":"image","title":"cover.jpg","mediaDownloadUrl":"https://example.com/cover.jpg"}]}]"#
-
-        let worksResponse = try? decoder.decode(WorksResponse.self, from: Data(list.utf8))
-        assert(worksResponse?.works.count == 1)
-        assert(worksResponse?.pagination.totalPages == 3)
-        let playlistWorksResponse = try? decoder.decode(WorksResponse.self, from: Data(playlistWorks.utf8))
-        assert(playlistWorksResponse?.pagination.currentPage == 1)
-        assert(playlistWorksResponse?.works.first?.id == 1172778)
-        let playlistsResponse = try? decoder.decode(PlaylistsResponse.self, from: Data(playlists.utf8))
-        assert(playlistsResponse?.playlists.first?.exist == true)
-        assert(playlistsResponse?.playlists.first?.worksCount == 1)
-        assert(PlaylistSummary(id: "liked", name: "__SYS_PLAYLIST_LIKED", privacy: 0, description: "", worksCount: 0).displayName == "我喜欢的")
-        assert(PlaylistSummary(id: "marked", name: "__SYS_PLAYLIST_MARKED", privacy: 0, description: "", worksCount: 0).displayName == "我标记的")
-        assert(PlaylistSummary(id: "custom", name: "自定义", privacy: 0, description: "", worksCount: 0).isSystemPreserved == false)
-        let decodedDetail = try? decoder.decode(WorkDetail.self, from: Data(detail.utf8))
-        assert(decodedDetail?.tags.first?.name == "耳かき")
-        assert(decodedDetail?.progress == .marked)
-        let decodedTracks = try? decoder.decode([TrackNode].self, from: Data(tracks.utf8))
-        assert(decodedTracks?.audioTracks.count == 1)
-        assert(decodedTracks?.defaultDirectoryPath.first?.children?.first?.isAudio == true)
-        assert(decodedTracks?.defaultDirectoryPath.first?.children?[1].isSubtitle == true)
-        assert(decodedTracks?.defaultDirectoryPath.first?.children?[2].isImage == true)
-        assert(decodedTracks?.defaultDirectoryPath.first?.children?[2].imagePreviewURL?.absoluteString == "https://example.com/cover.jpg")
-    }
-}
-#endif
 
 extension Array where Element == TrackNode {
     func resolvingDirectoryPath(ids: [TrackNode.ID]) -> [TrackNode]? {
