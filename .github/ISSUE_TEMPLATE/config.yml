@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 查看更新记录
+    url: https://github.com/wsmbsbbz/Wisimi/blob/main/CHANGELOG.md
+    about: 查看各版本的新增功能与问题修复
+  - name: 开发与验证指南
+    url: https://github.com/wsmbsbbz/Wisimi/blob/main/docs/DEVELOPMENT.md
+    about: 了解本地构建、测试脚本与调试入口

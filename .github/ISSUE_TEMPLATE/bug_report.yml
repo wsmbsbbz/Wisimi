@@ -1,0 +1,51 @@
+name: Bug 反馈
+description: 报告应用崩溃、播放异常、字幕/旁白问题或界面布局缺陷
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 清晰简洁地描述你遇到的问题。
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 列出可以稳定复现该问题的操作步骤。
+      placeholder: |
+        1. 打开 ...
+        2. 点击 ...
+        3. 观察到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 你期望正常情况下应该发生什么。
+    validations:
+      required: false
+  - type: input
+    id: app_version
+    attributes:
+      label: Wisimi 版本
+      placeholder: 例如 1.6.0
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: 设备型号与 iOS 版本
+      placeholder: 例如 iPhone 17 Pro / iOS 27.0
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息或截图
+      description: 可附上全年龄界面截图、报错文案或相关日志（请勿包含账号密码或 OpenRouter Token）。
+    validations:
+      required: false

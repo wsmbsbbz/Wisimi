@@ -874,14 +874,27 @@ final class WorkAudioPlayer: ObservableObject {
     #if DEBUG
     func prepareDebugNarrationPreview() throws {
         try prepareDebugPlayback()
-        subtitles = [
-            SubtitleLine(start: 0, end: 4, text: "晚安，做个好梦。"),
-            SubtitleLine(start: 4, end: 10, text: String(repeating: "这一句较长，用来检查窄屏与大字体下的完整换行，相邻字幕之间应保持清晰间距。", count: 4)),
-            SubtitleLine(start: 10, end: 20, text: String(repeating: "LongSubtitleWithoutSpaces", count: 12)),
-            SubtitleLine(start: 20, end: 28, text: "第一行：显式换行。\n第二行：完整显示。\n第三行：不覆盖下一条字幕。"),
-            SubtitleLine(start: 28, end: 30, text: "点击周边空白返回封面。")
-        ]
-        currentSubtitleIndex = 0
+        if ProcessInfo.processInfo.environment["WISIMI_DEBUG_NARRATION_DEMO"] == "1" {
+            workTitle = "雨夜森林的耳语与篝火"
+            circleName = "静夜工坊"
+            subtitles = [
+                SubtitleLine(start: 0, end: 6, text: "今夜は静かな雨音が森を包んでいます。"),
+                SubtitleLine(start: 6, end: 13, text: "深く息を吸って、ゆっくり肩の力を抜いていきましょう。"),
+                SubtitleLine(start: 13, end: 20, text: "パチパチと揺れる焚き火の音に、ただ耳を澄ませてみてください。"),
+                SubtitleLine(start: 20, end: 26, text: "今日の疲れは、雨の音と一緒にそっと手放して大丈夫ですよ。"),
+                SubtitleLine(start: 26, end: 30, text: "おやすみなさい、どうぞ穏やかな夢を。")
+            ]
+            currentSubtitleIndex = 1
+        } else {
+            subtitles = [
+                SubtitleLine(start: 0, end: 4, text: "晚安，做个好梦。"),
+                SubtitleLine(start: 4, end: 10, text: String(repeating: "这一句较长，用来检查窄屏与大字体下的完整换行，相邻字幕之间应保持清晰间距。", count: 4)),
+                SubtitleLine(start: 10, end: 20, text: String(repeating: "LongSubtitleWithoutSpaces", count: 12)),
+                SubtitleLine(start: 20, end: 28, text: "第一行：显式换行。\n第二行：完整显示。\n第三行：不覆盖下一条字幕。"),
+                SubtitleLine(start: 28, end: 30, text: "点击周边空白返回封面。")
+            ]
+            currentSubtitleIndex = 0
+        }
         narrationState = ProcessInfo.processInfo.environment["WISIMI_DEBUG_NARRATION_STATE"] == "enabled"
             ? .enabled : .failed("测试状态：网络暂不可用")
     }

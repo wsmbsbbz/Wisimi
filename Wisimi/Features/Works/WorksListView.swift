@@ -59,7 +59,12 @@ struct WorksListView: View {
            ProcessInfo.processInfo.environment["WISIMI_DEBUG_DOWNLOAD_MINIPLAYER"] == "1" {
             try? player.prepareDebugPlayback()
         }
-        _showsLocalLibrary = State(initialValue: debugScreen == "local-library" || debugScreen?.hasPrefix("downloads") == true || debugScreen == "download-local-detail")
+        _showsLocalLibrary = State(initialValue: debugScreen == "local-library" || debugScreen == "tts-settings" || debugScreen == "local-detail" || debugScreen?.hasPrefix("downloads") == true || debugScreen == "download-local-detail")
+        if debugScreen == "local-detail",
+           let rawID = ProcessInfo.processInfo.environment["WISIMI_DEBUG_LOCAL_ID"],
+           let uuid = UUID(uuidString: rawID) {
+            _path = State(initialValue: [.detail(.local(uuid))])
+        }
         if debugScreen == "player" || debugScreen == "mini-player" || debugScreen == "video" || debugScreen == "narration" {
             try? player.prepareDebugPlayback()
             if debugScreen == "narration" { try? player.prepareDebugNarrationPreview() }

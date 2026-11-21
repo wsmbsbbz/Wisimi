@@ -55,6 +55,8 @@ jobs:
 
       - name: Build unsigned app
         run: |
+          SHORT_VERSION="${RELEASE_TAG#v}"
+          SHORT_VERSION="${SHORT_VERSION%%-*}"
           xcodebuild build \
             -project Wisimi.xcodeproj \
             -scheme Wisimi \
@@ -62,6 +64,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            MARKETING_VERSION="$SHORT_VERSION" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
@@ -90,13 +93,16 @@ jobs:
         run: |
           IPA="$RUNNER_TEMP/release/Wisimi-${RELEASE_TAG}-unsigned.ipa"
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
-          printf '%s\n' '未签名 IPA，需自行签名后侧载。' > "$NOTES_FILE"
+          : > "$NOTES_FILE"
           if [[ -f CHANGELOG.md ]]; then
             awk -v version="${RELEASE_TAG#v}" '
               $0 == "## " version { include = 1; next }
               include && /^## / { exit }
               include { print }
-            ' CHANGELOG.md >> "$NOTES_FILE"
+            ' CHANGELOG.md > "$NOTES_FILE"
+          fi
+          if [[ ! -s "$NOTES_FILE" ]]; then
+            printf '%s\n' 'GitHub Release 提供未签名 IPA。' > "$NOTES_FILE"
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$IPA" --clobber
