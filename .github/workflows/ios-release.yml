@@ -50,10 +50,11 @@ jobs:
       - name: Run unit and integration tests with coverage
         run: |
           rm -rf "$RUNNER_TEMP/TestResult.xcresult"
+          SIM_ID=$(xcrun simctl list devices available iPhone --json | python3 -c 'import json,sys; devs=[d for r in json.load(sys.stdin)["devices"].values() for d in r if d.get("isAvailable")]; print(devs[0]["udid"])')
           xcodebuild test \
             -project Wisimi.xcodeproj \
             -scheme Wisimi \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -destination "id=$SIM_ID" \
             -derivedDataPath "$RUNNER_TEMP/DerivedDataTest" \
             -parallel-testing-enabled NO \
             -enableCodeCoverage YES \
