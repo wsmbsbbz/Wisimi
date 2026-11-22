@@ -70,36 +70,36 @@ struct StateAndTimerTests {
         let response = WorksResponse(works: [work], pagination: WorksPagination(currentPage: 2, pageSize: 12, totalCount: 36))
         var oldRequest: CheckedContinuation<WorksResponse, Error>?
         let old = Task {
-            await state.load(page: 1) {
+            await state.loadWorks(page: 1) {
                 try await withCheckedThrowingContinuation { oldRequest = $0 }
             }
         }
         while oldRequest == nil { await Task.yield() }
-        await state.load(page: 2) { response }
+        await state.loadWorks(page: 2) { response }
         oldRequest?.resume(returning: WorksResponse(works: [], pagination: WorksPagination(currentPage: 1, pageSize: 12, totalCount: 12)))
         await old.value
         #expect(state.works.first?.id == 2 && state.currentPage == 2 && state.pagination?.totalCount == 36 && !state.isLoading)
 
         oldRequest = nil
         let failedOld = Task {
-            await state.load(page: 1) {
+            await state.loadWorks(page: 1) {
                 try await withCheckedThrowingContinuation { oldRequest = $0 }
             }
         }
         while oldRequest == nil { await Task.yield() }
-        await state.load(page: 2) { response }
+        await state.loadWorks(page: 2) { response }
         oldRequest?.resume(throwing: URLError(.timedOut))
         await failedOld.value
         #expect(state.errorMessage == nil && state.currentPage == 2)
 
-        await state.load(page: 3) { throw URLError(.notConnectedToInternet) }
+        await state.loadWorks(page: 3) { throw URLError(.notConnectedToInternet) }
         #expect(state.errorMessage == "网络未连接，请检查网络后重试" && state.works.first?.id == 2 && state.currentPage == 2 && state.requestedPage == 3)
-        await state.load(page: state.requestedPage) { response }
+        await state.loadWorks(page: state.requestedPage) { response }
         #expect(state.errorMessage == nil && !state.isLoading)
 
         oldRequest = nil
         let resetOld = Task {
-            await state.load(page: 1) {
+            await state.loadWorks(page: 1) {
                 try await withCheckedThrowingContinuation { oldRequest = $0 }
             }
         }
@@ -126,28 +126,41 @@ struct StateAndTimerTests {
         }
         await browser.load(page: 1, token: nil, recommenderUUID: nil)
         #expect(lastPath.hasSuffix("/works") && browser.page.works.count == 1)
+        #expect(browser.summaryText == "共 24 部")
+        browser.filter.hasSubtitle = true
+        browser.filter.order = .dlCount
+        #expect(browser.summaryText == "有字幕 · 销量 降序 · 共 24 部")
+        browser.filter = .default
         browser.mode = .popular
         await browser.reload(token: nil, recommenderUUID: nil)
         #expect(lastPath.hasSuffix("/popular"))
+        #expect(browser.filterContext == .curated && browser.summaryText == "共 24 部")
+        browser.filter.hasSubtitle = true
+        #expect(browser.summaryText == "有字幕 · 共 24 部")
+        browser.filter = .default
         browser.mode = .favorites
         await browser.reload(token: nil, recommenderUUID: nil)
         #expect(browser.page.errorMessage != nil)
         await browser.load(page: 1, token: "test", recommenderUUID: nil)
         #expect(lastPath.hasSuffix("/review"))
+        #expect(browser.summaryText == "想听 · 标记时间 · 降序 · 共 24 部")
         browser.keyword = "hello"
         #expect(browser.filterContext == .works)
         await browser.reload(token: nil, recommenderUUID: nil)
         #expect(lastPath.hasSuffix("/search/hello"))
+        #expect(browser.summaryText == "搜索：hello · 共 24 部")
         browser.keyword = ""
         browser.mode = .recommended
         await browser.reload(token: "test", recommenderUUID: nil)
-        #expect(browser.page.errorMessage != nil)
+        #expect(browser.page.errorMessage != nil && browser.filterContext == .curated)
         await browser.load(page: 1, token: "test", recommenderUUID: "uuid")
         #expect(lastPath.hasSuffix("/recommend-for-user"))
+        #expect(browser.summaryText == "共 24 部")
         browser.mode = .playlists
         #expect(browser.filterContext == .playlists)
         await browser.reload(token: "test", recommenderUUID: nil)
         #expect(catalog.selectedID == "p1" && lastPath.hasSuffix("/get-playlist-works"))
+        #expect(browser.summaryText == "睡前 · 24 个作品")
         _ = try await catalog.ensureSelection(token: "test")
         HTTPStub.respond = { request in
             if request.url!.path.hasSuffix("delete-playlist") { return (200, #"{"id":"p1"}"#) }

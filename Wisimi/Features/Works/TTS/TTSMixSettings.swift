@@ -85,7 +85,6 @@ final class TTSMixSettings: ObservableObject {
         isOpenRouterConfigured = resolvedTokenStore.isConfigured
     }
 
-    var provider: TTSProviderID { model.provider }
     var selectedVoice: TTSVoice { model.voices.first(where: { $0.id == voiceID }) ?? model.voices[0] }
     var connectionTestModel: TTSModelID { model.provider == .openRouter ? model : .minimaxTurbo }
     var connectionTestVoice: TTSVoice {

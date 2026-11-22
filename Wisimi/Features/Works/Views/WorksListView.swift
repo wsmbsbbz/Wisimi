@@ -25,6 +25,7 @@ struct WorksListView: View {
     @State private var isLoginPresented = false
     @State private var isNarrationSettingsPresented = false
     @State private var pendingMode: WorksMode?
+    @State private var onlineScrollPosition = ScrollPosition()
     @FocusState private var isSearchFocused: Bool
     #if DEBUG
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -39,7 +40,7 @@ struct WorksListView: View {
         #endif
         let ttsSettings = TTSMixSettings()
         self.client = client
-        let source = WorkSource(online: OnlineWorkSource(client: client), library: .shared)
+        let source = WorkSource(client: client, library: .shared)
         self.source = source
         _browser = State(initialValue: WorksBrowserState(client: client, catalog: PlaylistCatalog(client: client)))
         _ttsSettings = StateObject(wrappedValue: ttsSettings)
@@ -124,78 +125,57 @@ struct WorksListView: View {
     }
 
     private var onlineBrowser: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                Color.clear
-                    .frame(height: 0)
-                    .id("top")
+        ScrollView {
+            VStack(spacing: 18) {
+                WorksSearchHeader(
+                    searchText: $searchText,
+                    activeSearchText: browser.keyword,
+                    selectedMode: browser.mode,
+                    summaryText: browser.summaryText,
+                    isSearchFocused: $isSearchFocused,
+                    onSearch: runSearch,
+                    onClearSearch: clearSearch,
+                    onModeSelected: selectMode,
+                    onFilter: { isFilterPresented = true }
+                )
 
-                VStack(spacing: 18) {
-                    WorksSearchHeader(
-                        searchText: $searchText,
-                        activeSearchText: browser.keyword,
-                        selectedMode: browser.mode,
-                        filter: browser.filter,
-                        reviewFilter: browser.reviewFilter,
-                        selectedPlaylist: catalog.selectedPlaylist,
-                        isSearchFocused: $isSearchFocused,
-                        onSearch: runSearch,
-                        onClearSearch: clearSearch,
-                        onModeSelected: selectMode,
-                        onFilter: { isFilterPresented = true }
-                    )
-
-                    if isLoading && works.isEmpty {
-                        ProgressView("加载作品中...")
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 40)
-                    } else if let errorMessage, works.isEmpty {
-                        RetryView(message: errorMessage) {
-                            await loadWorks(page: pageState.requestedPage)
+                PagedWorksContent(
+                    works: works.map(\.card),
+                    pagination: pagination,
+                    currentPage: currentPage,
+                    isLoading: isLoading,
+                    errorMessage: errorMessage,
+                    loadingTitle: "加载作品中...",
+                    onRetry: { await loadWorks(page: pageState.requestedPage) },
+                    onPageChanged: { page in
+                        await loadWorks(page: page)
+                        withAnimation {
+                            onlineScrollPosition.scrollTo(edge: .top)
                         }
-                    } else if works.isEmpty {
+                    },
+                    onSelect: { reference in
+                        path.append(.detail(reference))
+                    },
+                    emptyContent: {
                         EmptyStateView {
                             await loadWorks(page: 1)
                         }
-                    } else {
-                        VStack(spacing: 18) {
-                            if let errorMessage {
-                                InlineRetryView(message: errorMessage) {
-                                    Task { await loadWorks(page: pageState.requestedPage) }
-                                }
-                            }
-                            MasonryGrid(works: works.map(\.card)) { reference in
-                                path.append(.detail(reference))
-                            }
-
-                            PaginationControls(
-                                currentPage: currentPage,
-                                totalPages: pagination?.totalPages,
-                                isLoading: isLoading
-                            ) { page in
-                                Task {
-                                    await loadWorks(page: page)
-                                    withAnimation {
-                                        proxy.scrollTo("top", anchor: .top)
-                                    }
-                                }
-                            }
-                        }
                     }
+                )
 
-                    if shouldShowMiniPlayer {
-                        Color.clear.frame(height: miniPlayerAvoidanceHeight)
-                    }
+                if shouldShowMiniPlayer {
+                    Color.clear.frame(height: miniPlayerAvoidanceHeight)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
             }
-            .background(.background)
-            .refreshable {
-                await loadWorks(page: 1)
-                withAnimation {
-                    proxy.scrollTo("top", anchor: .top)
-                }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .scrollPosition($onlineScrollPosition)
+        .background(.background)
+        .refreshable {
+            await loadWorks(page: 1)
+            withAnimation {
+                onlineScrollPosition.scrollTo(edge: .top)
             }
         }
     }
@@ -348,6 +328,7 @@ struct WorksListView: View {
     }
 
     private func search(prefix: String, name: String) {
+        showsLocalLibrary = false
         searchText = "$\(prefix):\(name)$"
         browser.keyword = searchText
         isSearchFocused = false
@@ -418,9 +399,7 @@ private struct WorksSearchHeader: View {
     @Binding var searchText: String
     let activeSearchText: String
     let selectedMode: WorksMode
-    let filter: WorksFilter
-    let reviewFilter: ReviewFilter
-    let selectedPlaylist: PlaylistSummary?
+    let summaryText: String?
     var isSearchFocused: FocusState<Bool>.Binding
     let onSearch: () -> Void
     let onClearSearch: () -> Void
@@ -491,33 +470,6 @@ private struct WorksSearchHeader: View {
         }
         .padding(10)
         .background(.regularMaterial, in: .rect(cornerRadius: 8))
-    }
-
-    private var summaryText: String? {
-        if !activeSearchText.isEmpty {
-            var parts = ["搜索：\(activeSearchText)"]
-            if filter.hasSubtitle {
-                parts.append("有字幕")
-            }
-            parts.append("\(filter.order.title) \(filter.sort.title)")
-            return parts.joined(separator: " · ")
-        }
-
-        if selectedMode == .favorites {
-            return "\(reviewFilter.status.title) · \(reviewFilter.order.title) · \(reviewFilter.sort.title(for: reviewFilter.order))"
-        }
-
-        if selectedMode == .playlists {
-            return selectedPlaylist.map { "\($0.displayName) · \($0.countText)" } ?? "播放列表"
-        }
-
-        guard filter != .default else { return nil }
-        var parts: [String] = []
-        if filter.hasSubtitle {
-            parts.append("有字幕")
-        }
-        parts.append(selectedMode == .popular ? "热门作品" : "\(filter.order.title) \(filter.sort.title)")
-        return parts.joined(separator: " · ")
     }
 }
 

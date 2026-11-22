@@ -37,8 +37,12 @@ struct CoverImage: View {
             }
         }
         .task(id: url) {
-            guard let url, url.isFileURL else { return }
-            let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
+            guard let url, url.isFileURL else {
+                localImage = nil
+                loadedURL = nil
+                return
+            }
+            let data = try? await Data.load(from: url)
             guard !Task.isCancelled else { return }
             localImage = data.flatMap { UIImage(data: $0) }
             loadedURL = url

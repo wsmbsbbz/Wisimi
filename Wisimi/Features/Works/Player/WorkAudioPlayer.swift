@@ -109,6 +109,20 @@ final class WorkAudioPlayer: ObservableObject {
         Task { await restorePlayback() }
     }
 
+    isolated deinit {
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        for observer in [endObserver, failureObserver, interruptionObserver, resumptionObserver, routeChangeObserver].compactMap({ $0 }) {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        sleepTimerTask?.cancel()
+        loadTask?.cancel()
+        durationLoadTask?.cancel()
+        narrationTask?.cancel()
+        narrationCutoffTask?.cancel()
+        artworkTask?.cancel()
+        cancelPrefetchTasks()
+    }
+
     var videoPlayer: AVPlayer { player }
 
     var currentTrack: TrackNode? {
@@ -301,7 +315,7 @@ final class WorkAudioPlayer: ObservableObject {
             guard let subtitle = siblings.matchingSubtitle(for: track),
                   let url = subtitle.downloadSourceURL,
                   let content = try? await source.subtitleText(at: url), !Task.isCancelled else { return }
-            let lines = Self.parseSubtitles(content)
+            let lines = SubtitleParser.parse(content)
             await MainActor.run {
                 guard self.currentTrack?.id == track.id else { return }
                 self.subtitles = lines
@@ -358,7 +372,7 @@ final class WorkAudioPlayer: ObservableObject {
         let root = movie.deletingLastPathComponent()
         let input = root.appendingPathComponent("无元信息作品/音轨", isDirectory: true)
         let library = LocalWorkLibrary(directory: root.appendingPathComponent("Library"), requiresSecurityScope: false)
-        let testSource = WorkSource(online: source.online, library: library)
+        let testSource = WorkSource(client: source.client, library: library)
         let saved = UserDefaults.standard.data(forKey: PlaybackSnapshot.storageKey)
         let settingsSuite = "Wisimi.local-check.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: settingsSuite)!
@@ -785,9 +799,7 @@ final class WorkAudioPlayer: ObservableObject {
         guard let coverURL else { return }
 
         artworkTask = Task { [coverURL] in
-            let data: Data?
-            if coverURL.isFileURL { data = try? Data(contentsOf: coverURL) }
-            else { data = try? await URLSession.shared.data(from: coverURL).0 }
+            let data = try? await Data.load(from: coverURL)
             guard let data, !Task.isCancelled,
                   let image = UIImage(data: data) else { return }
 
@@ -1094,10 +1106,6 @@ final class WorkAudioPlayer: ObservableObject {
         print("Playback and sleep timer integration checks passed")
     }
     #endif
-
-    static func parseSubtitles(_ content: String) -> [SubtitleLine] {
-        SubtitleParser.parse(content)
-    }
 }
 
 private struct PlaybackSnapshot: Codable {
@@ -1123,12 +1131,6 @@ enum NarrationState: Equatable {
     case preparing
     case fallback
     case failed(String)
-}
-
-private extension String {
-    var deletingPathExtension: String {
-        (self as NSString).deletingPathExtension
-    }
 }
 
 #if os(iOS)

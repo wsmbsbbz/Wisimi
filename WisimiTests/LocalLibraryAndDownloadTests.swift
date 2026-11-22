@@ -61,7 +61,7 @@ struct LocalLibraryAndDownloadTests {
         let original = root.appendingPathComponent("本地作品")
         let storage = root.appendingPathComponent("Library")
         let library = LocalWorkLibrary(directory: storage, requiresSecurityScope: false)
-        let source = WorkSource(online: OnlineWorkSource(client: ASMRClient()), library: library)
+        let source = WorkSource(client: ASMRClient(), library: library)
         let catalog: any WorkCatalog = library
         let emptyPage = try await catalog.page(1, pageSize: 2, refresh: false)
         #expect(emptyPage.works.isEmpty && emptyPage.pagination.currentPage == 1)
@@ -110,7 +110,7 @@ struct LocalLibraryAndDownloadTests {
         try "台本内容".write(to: textOnlySource.appendingPathComponent("script.txt"), atomically: true, encoding: .utf8)
         try "1\n00:00:00,000 --> 00:00:01,000\n你好\n".write(to: textOnlySource.appendingPathComponent("01.srt"), atomically: true, encoding: .utf8)
         let textLibrary = LocalWorkLibrary(directory: root.appendingPathComponent("TextLibrary"), requiresSecurityScope: false)
-        let textSource = WorkSource(online: OnlineWorkSource(client: ASMRClient()), library: textLibrary)
+        let textSource = WorkSource(client: ASMRClient(), library: textLibrary)
         let textOnlyPlan = try await textLibrary.inspect(textOnlySource)
         let textOnlyImported = try await textLibrary.importWork(textOnlyPlan)
         let textOnlyLoaded = try await textSource.loadWork(.local(textOnlyImported.id))
@@ -212,29 +212,6 @@ struct LocalLibraryAndDownloadTests {
         let loadedDownload = try await reopened.loadWork(downloadID)
         #expect(loadedDownload.onlineWorkID == 99999999)
         #expect(loadedDownload.tracks.first?.playbackURL?.isFileURL == true)
-
-        let legacyID = UUID()
-        let legacyDir = storage.appendingPathComponent(legacyID.uuidString, isDirectory: true)
-        let legacyFiles = legacyDir.appendingPathComponent("files", isDirectory: true)
-        try files.createDirectory(at: legacyFiles, withIntermediateDirectories: true)
-        try Data(repeating: 1, count: 128).write(to: legacyFiles.appendingPathComponent("01.mp3"))
-        let legacyIndex: [String: Any] = [
-            "entry": [
-                "id": legacyID.uuidString,
-                "importedAt": 0,
-                "folderName": "旧版导入作品",
-                "metadata": ["title": "旧版导入作品"],
-                "hasSubtitle": false
-            ],
-            "tracks": [[
-                "type": "audio",
-                "title": "01.mp3",
-                "hash": "01.mp3"
-            ]]
-        ]
-        try JSONSerialization.data(withJSONObject: legacyIndex).write(to: legacyDir.appendingPathComponent("index.json"))
-        let withLegacy = try await reopened.page(1, pageSize: 12, refresh: true)
-        #expect(withLegacy.totalBytes == combined.totalBytes + 128)
     }
 
     @Test func dlsiteMetadataSyncAndParsing() async throws {

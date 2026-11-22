@@ -10,11 +10,9 @@ struct LocalWorksView: View {
     let openWork: (WorkReference) -> Void
 
     @State private var downloads = DownloadStore.shared
-    @State private var page: WorkCatalogPage?
-    @State private var loadRequest = UUID()
-    @State private var requestedPage = 1
-    @State private var loadError: String?
-    @State private var isLoading = false
+    @State private var pageState = PagedState<WorkCardSummary>()
+    @State private var unreadableCount = 0
+    @State private var totalBytes: Int64 = 0
     @State private var scrollPosition = ScrollPosition()
     @State private var showsPicker = false
     @State private var confirmsImport = false
@@ -55,32 +53,34 @@ struct LocalWorksView: View {
                     }
                 }
 
-                if let loadError {
-                    RetryView(message: loadError) { await load(requestedPage, refresh: true) }
+                if unreadableCount > 0 {
+                    Text("有 \(unreadableCount) 部作品无法读取。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-                if page == nil, loadError == nil {
-                    ProgressView("读取本地作品…")
-                        .frame(maxWidth: .infinity)
-                } else if let page {
-                    if page.unreadableCount > 0 {
-                        Text("有 \(page.unreadableCount) 部作品无法读取。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    if page.works.isEmpty, loadError == nil, page.unreadableCount == 0 {
-                        ContentUnavailableView("还没有本地作品", systemImage: "folder",
-                                               description: Text("从「文件」导入，或在在线作品详情中选择文件下载。"))
-                    } else if !page.works.isEmpty {
-                        MasonryGrid(works: page.works, onSelect: openWork)
-                            .id(page.pagination.currentPage)
-                        if page.pagination.totalPages > 1 {
-                            PaginationControls(currentPage: page.pagination.currentPage, totalPages: page.pagination.totalPages,
-                                               isLoading: isLoading) { number in
-                                Task { await load(number, scrollToTop: true) }
-                            }
+
+                PagedWorksContent(
+                    works: pageState.items,
+                    pagination: pageState.pagination,
+                    currentPage: pageState.currentPage,
+                    isLoading: pageState.isLoading || (pageState.pagination == nil && pageState.errorMessage == nil),
+                    errorMessage: pageState.errorMessage,
+                    loadingTitle: "读取本地作品…",
+                    onRetry: { await load(pageState.requestedPage, refresh: true) },
+                    onPageChanged: { number in await load(number, scrollToTop: true) },
+                    onSelect: openWork,
+                    emptyContent: {
+                        if unreadableCount == 0 {
+                            ContentUnavailableView(
+                                "还没有本地作品",
+                                systemImage: "folder",
+                                description: Text("从「文件」导入，或在在线作品详情中选择文件下载。")
+                            )
                         }
                     }
-                }
+                )
+                .id(pageState.currentPage)
+
                 if reservesMiniPlayerSpace {
                     Color.clear.frame(height: miniPlayerAvoidanceHeight)
                 }
@@ -90,12 +90,12 @@ struct LocalWorksView: View {
         .scrollPosition($scrollPosition)
         .task(id: refreshID) {
             if refreshID != nil {
-                await load(page?.pagination.currentPage ?? 1, refresh: page != nil)
+                await load(pageState.currentPage, refresh: pageState.pagination != nil)
                 triggerPendingDLsiteSync()
             }
         }
         .onChange(of: downloads.catalogRevision) {
-            Task { await load(page?.pagination.currentPage ?? 1, refresh: true) }
+            Task { await load(pageState.currentPage, refresh: true) }
         }
         .onChange(of: importTrigger) {
             if importTask == nil {
@@ -103,7 +103,7 @@ struct LocalWorksView: View {
             }
         }
         .refreshable {
-            await load(page?.pagination.currentPage ?? 1, refresh: true)
+            await load(pageState.currentPage, refresh: true)
             triggerPendingDLsiteSync()
         }
         .fileImporter(isPresented: $showsPicker, allowedContentTypes: [.folder], onCompletion: inspectSelection)
@@ -123,9 +123,9 @@ struct LocalWorksView: View {
 
     @ViewBuilder
     private var storageSummary: some View {
-        if let page, page.pagination.totalCount > 0 {
-            let sizeText = ByteCountFormatter.string(fromByteCount: page.totalBytes, countStyle: .file)
-            Text("共 \(page.pagination.totalCount) 部 · 占用 \(sizeText)")
+        if let pagination = pageState.pagination, pagination.totalCount > 0 {
+            let sizeText = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
+            Text("共 \(pagination.totalCount) 部 · 占用 \(sizeText)")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -133,22 +133,17 @@ struct LocalWorksView: View {
     }
 
     private func load(_ number: Int, refresh: Bool = false, scrollToTop: Bool = false) async {
-        let request = UUID()
-        loadRequest = request
-        requestedPage = number
-        isLoading = true
-        defer { if loadRequest == request { isLoading = false } }
-        do {
+        var loadedResult: WorkCatalogPage?
+        let didApply = await pageState.load(page: number) {
             let result = try await catalog.page(number, pageSize: 12, refresh: refresh)
-            guard loadRequest == request, !Task.isCancelled else { return }
-            page = result
-            loadError = nil
-            if scrollToTop || result.pagination.currentPage != number {
-                scrollPosition.scrollTo(edge: .top)
-            }
-        } catch {
-            guard loadRequest == request, !Task.isCancelled else { return }
-            loadError = error.userFacingMessage
+            loadedResult = result
+            return PagedResponse(items: result.works, pagination: result.pagination)
+        }
+        guard didApply, let loadedResult else { return }
+        unreadableCount = loadedResult.unreadableCount
+        totalBytes = loadedResult.totalBytes
+        if scrollToTop || pageState.currentPage != number {
+            scrollPosition.scrollTo(edge: .top)
         }
     }
 
@@ -177,7 +172,7 @@ struct LocalWorksView: View {
             defer { syncTask = nil }
             let updated = await library.syncPendingDLsiteMetadataIfNeeded()
             guard updated, !Task.isCancelled else { return }
-            await load(page?.pagination.currentPage ?? 1)
+            await load(pageState.currentPage)
         }
     }
 

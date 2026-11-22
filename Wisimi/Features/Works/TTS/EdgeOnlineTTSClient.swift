@@ -138,28 +138,22 @@ final class EdgeOnlineTTSClient {
         return Data(frame[separatorRange.upperBound...])
     }
 
-    static func cacheURL(for text: String, speechRate: Double) -> URL {
-        TTSSynthesisRequest(
-            model: .edge,
-            voiceID: TTSModelID.edge.defaultVoiceID,
-            text: text,
-            speechRate: speechRate,
-            expression: .automatic
-        ).cacheURL
-    }
-
     private static func connectionID() -> String {
         (0..<16)
             .map { _ in String(format: "%02x", UInt8.random(in: .min ... .max)) }
             .joined()
     }
 
-    private static func edgeDateString() -> String {
+    private static let edgeTimestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "EEE MMM dd yyyy HH:mm:ss 'GMT+0000 (Coordinated Universal Time)'"
-        return formatter.string(from: Date())
+        return formatter
+    }()
+
+    private static func edgeDateString() -> String {
+        edgeTimestampFormatter.string(from: Date())
     }
 
     private static func escapeXML(_ value: String) -> String {

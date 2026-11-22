@@ -4,36 +4,39 @@ struct PaginationControls: View {
     let currentPage: Int
     let totalPages: Int?
     let isLoading: Bool
+    var hidesWhenSinglePage = true
     let onPageChanged: (Int) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
-            pageButton(
-                symbol: "chevron.left",
-                label: "上一页",
-                page: currentPage - 1,
-                disabled: currentPage <= 1 || isLoading
-            )
+        if !hidesWhenSinglePage || (totalPages ?? 1) > 1 {
+            HStack(spacing: 4) {
+                pageButton(
+                    symbol: "chevron.left",
+                    label: "上一页",
+                    page: currentPage - 1,
+                    disabled: currentPage <= 1 || isLoading
+                )
 
-            Text("\(currentPage)/\(totalPages.map(String.init) ?? "?")")
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
-                .frame(minWidth: 44)
+                Text("\(currentPage)/\(totalPages.map(String.init) ?? "?")")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .frame(minWidth: 44)
 
-            pageButton(
-                symbol: "chevron.right",
-                label: "下一页",
-                page: currentPage + 1,
-                disabled: (totalPages.map { currentPage >= $0 } ?? true) || isLoading
-            )
+                pageButton(
+                    symbol: "chevron.right",
+                    label: "下一页",
+                    page: currentPage + 1,
+                    disabled: (totalPages.map { currentPage >= $0 } ?? true) || isLoading
+                )
 
-            if isLoading {
-                ProgressView()
-                    .controlSize(.small)
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 2)
     }
 
     private func pageButton(symbol: String, label: String, page: Int, disabled: Bool) -> some View {

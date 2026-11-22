@@ -21,6 +21,49 @@ final class WorksBrowserState {
         WorksFilterContext.resolve(isSearchActive: !keyword.isEmpty, mode: mode)
     }
 
+    var summaryText: String? {
+        let totalCount = page.pagination?.totalCount
+        let countText = totalCount.map { "共 \($0) 部" }
+
+        if !keyword.isEmpty {
+            let parts = ["搜索：\(keyword)"] + filterParts(includeSort: true, countText: countText)
+            return parts.joined(separator: " · ")
+        }
+
+        switch mode {
+        case .favorites:
+            var parts = [
+                reviewFilter.status.title,
+                reviewFilter.order.title,
+                reviewFilter.sort.title(for: reviewFilter.order)
+            ]
+            if let countText { parts.append(countText) }
+            return parts.joined(separator: " · ")
+        case .playlists:
+            guard let selectedPlaylist = catalog.selectedPlaylist else { return "播放列表" }
+            let count = totalCount ?? selectedPlaylist.worksCount
+            return "\(selectedPlaylist.displayName) · \(count) 个作品"
+        case .latest:
+            let parts = filterParts(includeSort: true, countText: countText)
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        case .popular, .recommended:
+            let parts = filterParts(includeSort: false, countText: countText)
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
+    }
+
+    private func filterParts(includeSort: Bool, countText: String?) -> [String] {
+        var parts: [String] = []
+        if filter.hasSubtitle { parts.append("有字幕") }
+        if includeSort, hasCustomSort { parts.append("\(filter.order.title) \(filter.sort.title)") }
+        if let countText { parts.append(countText) }
+        return parts
+    }
+
+    private var hasCustomSort: Bool {
+        filter.order != WorksFilter.default.order || filter.sort != WorksFilter.default.sort
+    }
+
     func reload(token: String?, recommenderUUID: String?) async {
         page.reset()
         await load(page: 1, token: token, recommenderUUID: recommenderUUID)
@@ -30,7 +73,7 @@ final class WorksBrowserState {
         guard requestedPage >= 1 else { return }
         if let totalPages = page.pagination?.totalPages, requestedPage > totalPages { return }
         let keyword = keyword, mode = mode, filter = filter, reviewFilter = reviewFilter
-        await page.load(page: requestedPage) {
+        await page.loadWorks(page: requestedPage) {
             if !keyword.isEmpty {
                 return try await self.client.searchWorks(keyword: keyword, page: requestedPage, filter: filter)
             }

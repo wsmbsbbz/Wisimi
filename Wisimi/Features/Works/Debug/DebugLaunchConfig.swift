@@ -90,10 +90,10 @@ struct DebugLaunchConfig {
         }
         if screen == "list-error" {
             let json = #"{"works":[{"id":1,"title":"晚安 · 轻声陪伴与耳边细语","name":"Wisimi","has_subtitle":true,"tags":[],"vas":[]}],"pagination":{"currentPage":1,"pageSize":12,"totalCount":36}}"#
-            await pageState.load(page: 1) {
+            await pageState.loadWorks(page: 1) {
                 try JSONDecoder().decode(WorksResponse.self, from: Data(json.utf8))
             }
-            await pageState.load(page: 2) { throw URLError(.notConnectedToInternet) }
+            await pageState.loadWorks(page: 2) { throw URLError(.notConnectedToInternet) }
             return .handled()
         }
         if screen == "video" {

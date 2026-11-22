@@ -33,7 +33,7 @@ struct ModelsAndDecodingTests {
         #expect(decodedDetail.progress == .marked)
 
         let decodedTracks = try decoder.decode([TrackNode].self, from: Data(tracks.utf8))
-        #expect(decodedTracks.audioTracks.count == 1)
+        #expect(decodedTracks.defaultDirectoryPath.first?.children?.playableTracks.count == 1)
         #expect(decodedTracks.defaultDirectoryPath.first?.children?.first?.isAudio == true)
         #expect(decodedTracks.defaultDirectoryPath.first?.children?[1].isSubtitle == true)
         #expect(decodedTracks.defaultDirectoryPath.first?.children?[2].isImage == true)
@@ -108,8 +108,8 @@ struct ModelsAndDecodingTests {
         #expect(WorksFilterContext.resolve(isSearchActive: false, mode: .favorites) == .favorites)
         #expect(WorksFilterContext.resolve(isSearchActive: false, mode: .playlists) == .playlists)
         #expect(WorksFilterContext.resolve(isSearchActive: false, mode: .latest) == .works)
-        #expect(WorksFilterContext.resolve(isSearchActive: false, mode: .popular) == .works)
-        #expect(WorksFilterContext.resolve(isSearchActive: false, mode: .recommended) == .works)
+        #expect(WorksFilterContext.resolve(isSearchActive: false, mode: .popular) == .curated)
+        #expect(WorksFilterContext.resolve(isSearchActive: false, mode: .recommended) == .curated)
 
         let online = WorkReference.asmrOne(1)
         let local = WorkReference.local(UUID())

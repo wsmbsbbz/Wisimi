@@ -19,10 +19,10 @@ final class WorkDetailPageState {
     private var workGeneration = UUID()
     private var markRevision = 0
     private var loadTask: Task<Void, Never>?
-    private let source: OnlineWorkSource
+    private let client: ASMRClient
 
     init(client: ASMRClient) {
-        source = OnlineWorkSource(client: client)
+        self.client = client
     }
 
     func load(workID: Int, token: String?, force: Bool = false) async {
@@ -41,12 +41,12 @@ final class WorkDetailPageState {
         let task = Task {
             defer { if requestID == id { isLoading = false; loadTask = nil } }
             do {
-                let snapshot = try await source.loadWork(workID, token: token)
+                let (workSnapshot, tracks) = try await client.fetchWorkWithTracks(id: workID, token: token)
                 guard requestID == id, !Task.isCancelled else { return }
                 let displayedWork: WorkDetail
                 if revision != markRevision, let current = self.work, current.id == workID { displayedWork = current }
-                else { displayedWork = snapshot.work }
-                apply(work: displayedWork, tracks: snapshot.tracks, workID: workID)
+                else { displayedWork = workSnapshot }
+                apply(work: displayedWork, tracks: tracks, workID: workID)
             } catch {
                 guard requestID == id, !Task.isCancelled, !(error is CancellationError) else { return }
                 errorMessage = error.userFacingMessage
@@ -63,7 +63,6 @@ final class WorkDetailPageState {
         markMessage = nil
         defer { isUpdatingMark = false }
         do {
-            let client = source.client
             if let status { try await client.markWork(id: work.id, status: status, token: token) }
             else { try await client.unmarkWork(id: work.id, token: token) }
             let updated = try await client.fetchWork(id: work.id, token: token)

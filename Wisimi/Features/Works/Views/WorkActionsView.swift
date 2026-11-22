@@ -4,43 +4,30 @@ struct ReviewActionButton: View {
     let currentStatus: ReviewStatus?
     let isLoggedIn: Bool
     let isLoading: Bool
-    @Binding var isMenuPresented: Bool
     let message: String?
     let onLoginRequired: () -> Void
     let onStatusSelected: (ReviewStatus?) -> Void
+    @State private var isMenuPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            markButton
+            WorkActionSheetButton(
+                title: "标记",
+                systemImage: currentStatus == nil ? "bookmark" : "bookmark.fill",
+                detail: currentStatus?.title,
+                isLoggedIn: isLoggedIn,
+                isLoading: isLoading,
+                isPresented: $isMenuPresented,
+                onLoginRequired: onLoginRequired
+            ) {
+                markMenu
+            }
 
             if let message {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-        }
-    }
-
-    private var markButton: some View {
-        Button {
-            guard isLoggedIn else {
-                onLoginRequired()
-                return
-            }
-            isMenuPresented = true
-        } label: {
-            WorkActionLabel(
-                title: "标记",
-                systemImage: currentStatus == nil ? "bookmark" : "bookmark.fill",
-                detail: currentStatus?.title,
-                isLoading: isLoading
-            )
-        }
-        .buttonStyle(.bordered)
-        .disabled(isLoading)
-        .sheet(isPresented: $isMenuPresented) {
-            markMenu
-                .presentationDetents([.medium, .large])
         }
     }
 
@@ -74,26 +61,55 @@ struct PlaylistActionButton: View {
     let workID: Int
     let client: ASMRClient
     let token: String?
-    @Binding var isMenuPresented: Bool
     let onLoginRequired: () -> Void
+    @State private var isMenuPresented = false
+
+    var body: some View {
+        WorkActionSheetButton(
+            title: "添加到播放列表",
+            systemImage: "plus",
+            isLoggedIn: token != nil,
+            isPresented: $isMenuPresented,
+            onLoginRequired: onLoginRequired
+        ) {
+            if let token {
+                PlaylistMembershipSheet(workID: workID, client: client, token: token)
+            }
+        }
+        .tint(.blue)
+    }
+}
+
+private struct WorkActionSheetButton<SheetContent: View>: View {
+    let title: String
+    let systemImage: String
+    var detail: String? = nil
+    let isLoggedIn: Bool
+    var isLoading = false
+    @Binding var isPresented: Bool
+    let onLoginRequired: () -> Void
+    @ViewBuilder let sheetContent: () -> SheetContent
 
     var body: some View {
         Button {
-            guard token != nil else {
+            guard isLoggedIn else {
                 onLoginRequired()
                 return
             }
-            isMenuPresented.toggle()
+            isPresented = true
         } label: {
-            WorkActionLabel(title: "添加到播放列表", systemImage: "plus")
+            WorkActionLabel(
+                title: title,
+                systemImage: systemImage,
+                detail: detail,
+                isLoading: isLoading
+            )
         }
         .buttonStyle(.bordered)
-        .tint(.blue)
-        .sheet(isPresented: $isMenuPresented) {
-            if let token {
-                PlaylistMembershipSheet(workID: workID, client: client, token: token)
-                    .presentationDetents([.medium, .large])
-            }
+        .disabled(isLoading)
+        .sheet(isPresented: $isPresented) {
+            sheetContent()
+                .presentationDetents([.medium, .large])
         }
     }
 }
@@ -134,11 +150,11 @@ private struct PlaylistMembershipSheet: View {
                 }
             }
 
-            if let pagination = state.pagination, pagination.totalPages > 1 {
+            if (state.pagination?.totalPages ?? 1) > 1 {
                 Section {
                     PaginationControls(
                         currentPage: state.currentPage,
-                        totalPages: pagination.totalPages,
+                        totalPages: state.pagination?.totalPages,
                         isLoading: state.isLoading
                     ) { page in
                         Task { await state.load(page: page, token: token) }
@@ -148,42 +164,6 @@ private struct PlaylistMembershipSheet: View {
         }
         .task {
             await state.load(page: 1, token: token)
-        }
-    }
-}
-
-extension SelectionRow {
-    init(
-        playlist: PlaylistSummary,
-        isSelected: Bool,
-        style: SelectionRowStyle,
-        isLoading: Bool = false,
-        action: @escaping () -> Void,
-        @ViewBuilder accessory: @escaping () -> Accessory
-    ) {
-        self.init(
-            title: playlist.displayName,
-            subtitle: playlist.countText,
-            systemImage: playlist.systemImage,
-            isSelected: isSelected,
-            style: style,
-            isLoading: isLoading,
-            action: action,
-            accessory: accessory
-        )
-    }
-}
-
-extension SelectionRow where Accessory == EmptyView {
-    init(
-        playlist: PlaylistSummary,
-        isSelected: Bool,
-        style: SelectionRowStyle,
-        isLoading: Bool = false,
-        action: @escaping () -> Void
-    ) {
-        self.init(playlist: playlist, isSelected: isSelected, style: style, isLoading: isLoading, action: action) {
-            EmptyView()
         }
     }
 }

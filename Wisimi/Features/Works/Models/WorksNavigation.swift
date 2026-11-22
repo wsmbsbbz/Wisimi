@@ -39,6 +39,7 @@ enum WorksMode: String, CaseIterable, Identifiable {
 
 enum WorksFilterContext: Equatable {
     case works
+    case curated
     case favorites
     case playlists
 
@@ -48,7 +49,8 @@ enum WorksFilterContext: Equatable {
         return switch mode {
         case .favorites: .favorites
         case .playlists: .playlists
-        case .latest, .popular, .recommended: .works
+        case .popular, .recommended: .curated
+        case .latest: .works
         }
     }
 }

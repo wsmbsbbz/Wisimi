@@ -20,48 +20,9 @@ nonisolated struct LocalWorkEntry: Codable, Identifiable, Sendable {
     let metadata: LocalWorkMetadata
     let hasSubtitle: Bool
     let metadataWarning: String?
-    let needsDLsiteSync: Bool
-    let onlineWorkID: Int?
-    let byteCount: Int64
-
-    enum CodingKeys: String, CodingKey {
-        case id, importedAt, folderName, metadata, hasSubtitle, metadataWarning, needsDLsiteSync, onlineWorkID, byteCount
-    }
-
-    init(
-        id: UUID,
-        importedAt: Date,
-        folderName: String,
-        metadata: LocalWorkMetadata,
-        hasSubtitle: Bool,
-        metadataWarning: String?,
-        needsDLsiteSync: Bool = false,
-        onlineWorkID: Int? = nil,
-        byteCount: Int64 = 0
-    ) {
-        self.id = id
-        self.importedAt = importedAt
-        self.folderName = folderName
-        self.metadata = metadata
-        self.hasSubtitle = hasSubtitle
-        self.metadataWarning = metadataWarning
-        self.needsDLsiteSync = needsDLsiteSync
-        self.onlineWorkID = onlineWorkID
-        self.byteCount = byteCount
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        importedAt = try container.decode(Date.self, forKey: .importedAt)
-        folderName = try container.decode(String.self, forKey: .folderName)
-        metadata = try container.decode(LocalWorkMetadata.self, forKey: .metadata)
-        hasSubtitle = try container.decode(Bool.self, forKey: .hasSubtitle)
-        metadataWarning = try container.decodeIfPresent(String.self, forKey: .metadataWarning)
-        needsDLsiteSync = try container.decodeIfPresent(Bool.self, forKey: .needsDLsiteSync) ?? false
-        onlineWorkID = try container.decodeIfPresent(Int.self, forKey: .onlineWorkID)
-        byteCount = try container.decodeIfPresent(Int64.self, forKey: .byteCount) ?? 0
-    }
+    var needsDLsiteSync: Bool = false
+    var onlineWorkID: Int? = nil
+    var byteCount: Int64 = 0
 
     var title: String { Self.text(metadata.title) ?? folderName }
 
@@ -178,20 +139,6 @@ actor LocalWorkLibrary: WorkCatalog {
                 let index = folder.appendingPathComponent("index.json")
                 let header = try JSONDecoder().decode(ManifestHeader.self, from: Data(contentsOf: index))
                 guard header.entry.id == id else { throw CocoaError(.fileReadCorruptFile) }
-                if header.entry.onlineWorkID == nil, header.entry.byteCount == 0 {
-                    let measuredBytes = directorySize(at: folder.appendingPathComponent("files", isDirectory: true))
-                    if measuredBytes > 0 {
-                        let backfilled = header.entry.updating(
-                            metadata: header.entry.metadata,
-                            needsDLsiteSync: header.entry.needsDLsiteSync,
-                            warning: header.entry.metadataWarning,
-                            byteCount: measuredBytes
-                        )
-                        try? persistUpdatedEntry(backfilled)
-                        entries.append(backfilled)
-                        continue
-                    }
-                }
                 entries.append(header.entry)
             } catch {
                 failed += 1
@@ -199,22 +146,6 @@ actor LocalWorkLibrary: WorkCatalog {
         }
         catalog = entries.sorted(by: Self.newestFirst)
         unreadableCount = failed
-    }
-
-    private func directorySize(at root: URL) -> Int64 {
-        guard let enumerator = files.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return 0 }
-        var total: Int64 = 0
-        for case let fileURL as URL in enumerator {
-            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                  values.isRegularFile == true,
-                  values.isSymbolicLink == false else { continue }
-            total += Int64(values.fileSize ?? 0)
-        }
-        return total
     }
 
     private nonisolated static func newestFirst(_ first: LocalWorkEntry, _ second: LocalWorkEntry) -> Bool {

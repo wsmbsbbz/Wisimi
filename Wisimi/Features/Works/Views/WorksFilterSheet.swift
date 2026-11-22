@@ -55,7 +55,9 @@ struct WorksFilterSheet: View {
                         }
                     )
                 case .works:
-                    WorksFilterSections(filter: $draft)
+                    WorksFilterSections(filter: $draft, showsSort: true)
+                case .curated:
+                    WorksFilterSections(filter: $draft, showsSort: false)
                 }
             }
             .sheetErrorBar(mutationMessage)
@@ -68,6 +70,7 @@ struct WorksFilterSheet: View {
                         case .favorites: reviewDraft = .default
                         case .playlists: playlistID = managedPlaylists.first?.id
                         case .works: draft = .default
+                        case .curated: draft.hasSubtitle = false
                         }
                     }
                 }
@@ -76,7 +79,7 @@ struct WorksFilterSheet: View {
                         switch context {
                         case .favorites: onApplyReviewFilter(reviewDraft)
                         case .playlists: if let playlistID { onApplyPlaylist(playlistID) }
-                        case .works: onApply(draft)
+                        case .works, .curated: onApply(draft)
                         }
                         dismiss()
                     }
@@ -131,20 +134,14 @@ private struct ReviewFilterSections: View {
             .labelsHidden()
         }
 
-        Section("排序") {
-            Picker("字段", selection: $filter.order) {
-                ForEach(ReviewOrder.allCases) { order in
-                    Text(order.title).tag(order)
-                }
-            }
-
-            Picker("方向", selection: $filter.sort) {
-                ForEach(ReviewSort.allCases) { sort in
-                    Text(sort.title(for: filter.order)).tag(sort)
-                }
-            }
-            .pickerStyle(.segmented)
-        }
+        SortFilterSection(
+            order: $filter.order,
+            sort: $filter.sort,
+            orders: ReviewOrder.allCases,
+            sorts: ReviewSort.allCases,
+            orderTitle: \.title,
+            sortTitle: { $0.title(for: filter.order) }
+        )
     }
 }
 
@@ -218,22 +215,45 @@ private struct PlaylistActionsButton: View {
 
 private struct WorksFilterSections: View {
     @Binding var filter: WorksFilter
+    let showsSort: Bool
 
     var body: some View {
         Section {
             Toggle("有字幕", isOn: $filter.hasSubtitle)
         }
 
+        if showsSort {
+            SortFilterSection(
+                order: $filter.order,
+                sort: $filter.sort,
+                orders: WorksOrder.allCases,
+                sorts: WorksSort.allCases,
+                orderTitle: \.title,
+                sortTitle: \.title
+            )
+        }
+    }
+}
+
+private struct SortFilterSection<Order: Hashable & Identifiable, Sort: Hashable & Identifiable>: View {
+    @Binding var order: Order
+    @Binding var sort: Sort
+    let orders: [Order]
+    let sorts: [Sort]
+    let orderTitle: (Order) -> String
+    let sortTitle: (Sort) -> String
+
+    var body: some View {
         Section("排序") {
-            Picker("字段", selection: $filter.order) {
-                ForEach(WorksOrder.allCases) { order in
-                    Text(order.title).tag(order)
+            Picker("字段", selection: $order) {
+                ForEach(orders) { item in
+                    Text(orderTitle(item)).tag(item)
                 }
             }
 
-            Picker("方向", selection: $filter.sort) {
-                ForEach(WorksSort.allCases) { sort in
-                    Text(sort.title).tag(sort)
+            Picker("方向", selection: $sort) {
+                ForEach(sorts) { item in
+                    Text(sortTitle(item)).tag(item)
                 }
             }
             .pickerStyle(.segmented)

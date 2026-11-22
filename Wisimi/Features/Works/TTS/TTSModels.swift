@@ -2,18 +2,9 @@ import AudioToolbox
 import CryptoKit
 import Foundation
 
-enum TTSProviderID: String, CaseIterable, Identifiable {
+enum TTSProviderID: String {
     case edge
     case openRouter
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .edge: "Edge TTS"
-        case .openRouter: "OpenRouter"
-        }
-    }
 }
 
 struct TTSVoice: Identifiable, Hashable {
@@ -37,20 +28,16 @@ struct TTSModelCapabilities {
 
 enum TTSExpressionPreset: String, CaseIterable, Identifiable {
     case automatic
-    case gentle
     case whisper
     case lively
-    case dramatic
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .automatic: "自动"
-        case .gentle: "温柔"
         case .whisper: "耳语"
         case .lively: "活泼"
-        case .dramatic: "剧情化"
         }
     }
 }
@@ -347,10 +334,6 @@ enum TTSSynthesisError: LocalizedError, Equatable {
         case .transport: "TTS 网络请求失败"
         }
     }
-}
-
-struct TTSFallbackNotice: Equatable {
-    let message: String
 }
 
 struct OpenRouterPlaybackSession {

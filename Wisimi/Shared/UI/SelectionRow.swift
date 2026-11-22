@@ -97,3 +97,39 @@ extension SelectionRow where Accessory == EmptyView {
         )
     }
 }
+
+extension SelectionRow {
+    init(
+        playlist: PlaylistSummary,
+        isSelected: Bool,
+        style: SelectionRowStyle,
+        isLoading: Bool = false,
+        action: @escaping () -> Void,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) {
+        self.init(
+            title: playlist.displayName,
+            subtitle: playlist.countText,
+            systemImage: playlist.systemImage,
+            isSelected: isSelected,
+            style: style,
+            isLoading: isLoading,
+            action: action,
+            accessory: accessory
+        )
+    }
+}
+
+extension SelectionRow where Accessory == EmptyView {
+    init(
+        playlist: PlaylistSummary,
+        isSelected: Bool,
+        style: SelectionRowStyle,
+        isLoading: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.init(playlist: playlist, isSelected: isSelected, style: style, isLoading: isLoading, action: action) {
+            EmptyView()
+        }
+    }
+}

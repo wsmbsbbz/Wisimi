@@ -34,7 +34,7 @@ final class SimilarWorksState {
             if number == page.currentPage, page.errorMessage == nil { return }
         } else if number != 1 { return }
 
-        await page.load(page: number) { [client, workID] in
+        await page.loadWorks(page: number) { [client, workID] in
             let response = try await client.fetchSimilarWorks(workID: workID, page: number)
             var seen = Set<Int>()
             return WorksResponse(

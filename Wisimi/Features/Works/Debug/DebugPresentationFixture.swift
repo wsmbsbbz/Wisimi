@@ -3,8 +3,6 @@ import SwiftUI
 
 /// Exercises the real controls without login or remote mutations.
 struct DebugWorkActionsPreview: View {
-    @State private var isMarkMenuPresented = false
-    @State private var isPlaylistMenuPresented = false
     @State private var isFilterPresented = false
     @State private var isLoading = false
     @State private var currentStatus: ReviewStatus?
@@ -24,13 +22,12 @@ struct DebugWorkActionsPreview: View {
                     }
                     ReviewActionButton(
                         currentStatus: currentStatus, isLoggedIn: true, isLoading: isLoading,
-                        isMenuPresented: $isMarkMenuPresented, message: nil,
+                        message: nil,
                         onLoginRequired: {},
                         onStatusSelected: { currentStatus = $0 }
                     )
                     PlaylistActionButton(
                         workID: 0, client: client, token: DebugSheetFixture.token,
-                        isMenuPresented: $isPlaylistMenuPresented,
                         onLoginRequired: {}
                     )
                     Button("打开播放列表筛选") { isFilterPresented = true }

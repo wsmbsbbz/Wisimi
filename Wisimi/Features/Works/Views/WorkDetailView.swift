@@ -15,8 +15,6 @@ struct WorkDetailView: View {
     @State private var pageState: WorkDetailPageState
     @State private var similarWorks: SimilarWorksState
     @State private var scrollPosition = ScrollPosition()
-    @State private var isMarkMenuPresented = false
-    @State private var isPlaylistMenuPresented = false
 
     init(workID: Int, client: ASMRClient, auth: AuthSession, player: WorkAudioPlayer,
          reservesMiniPlayerSpace: Bool, onSearch: @escaping (String, String) -> Void,
@@ -171,7 +169,6 @@ struct WorkDetailView: View {
             currentStatus: work.progress,
             isLoggedIn: auth.token != nil,
             isLoading: pageState.isUpdatingMark,
-            isMenuPresented: $isMarkMenuPresented,
             message: pageState.markMessage,
             onLoginRequired: onLoginRequired,
             onStatusSelected: mark
@@ -183,7 +180,6 @@ struct WorkDetailView: View {
             workID: work.id,
             client: client,
             token: auth.token,
-            isMenuPresented: $isPlaylistMenuPresented,
             onLoginRequired: onLoginRequired
         )
     }

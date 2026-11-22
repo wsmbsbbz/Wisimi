@@ -68,31 +68,16 @@ nonisolated struct SourceWork: Sendable {
     var onlineWorkID: Int? = nil
 }
 
-struct OnlineWorkSnapshot {
-    let work: WorkDetail
-    let tracks: [TrackNode]
-}
-
-@MainActor
-struct OnlineWorkSource {
-    let client: ASMRClient
-
-    func loadWork(_ id: Int, token: String? = nil) async throws -> OnlineWorkSnapshot {
-        let (work, tracks) = try await client.fetchWorkWithTracks(id: id, token: token)
-        return OnlineWorkSnapshot(work: work, tracks: tracks)
-    }
-}
-
 @MainActor
 struct WorkSource {
-    let online: OnlineWorkSource
+    let client: ASMRClient
     let library: LocalWorkLibrary
 
     func loadWork(_ reference: WorkReference) async throws -> SourceWork {
         switch reference {
         case .asmrOne(let id):
-            let snapshot = try await online.loadWork(id)
-            return SourceWork(work: snapshot.work.presentation, tracks: snapshot.tracks, onlineWorkID: id)
+            let (work, tracks) = try await client.fetchWorkWithTracks(id: id)
+            return SourceWork(work: work.presentation, tracks: tracks, onlineWorkID: id)
         case .local(let id):
             return try await library.loadWork(id)
         }
@@ -100,6 +85,6 @@ struct WorkSource {
 
     func subtitleText(at url: URL) async throws -> String {
         if url.isFileURL { return try TrackTextDecoder.decode(Data(contentsOf: url)) }
-        return try await online.client.fetchText(url)
+        return try await client.fetchText(url)
     }
 }

@@ -131,8 +131,6 @@ struct WorkDetail: Codable {
 
     var mainCoverURL: URL? { mainCover.flatMap(URL.init(string:)) }
     var rjCode: String { "RJ\(id)" }
-    var ratingText: String { rateAverage.map { String(format: "%.1f", $0) } ?? "-" }
-    var durationText: String { duration.formattedDuration }
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -231,14 +229,6 @@ extension Array where Element == TrackNode {
 
     var playableTracks: [TrackNode] {
         filter { $0.isPlayable && $0.playbackURL != nil }
-    }
-
-    var audioTracks: [TrackNode] {
-        flatMap { node in
-            var result = node.isAudio ? [node] : []
-            result += node.children?.audioTracks ?? []
-            return result
-        }
     }
 
     var defaultDirectoryPath: [TrackNode] {

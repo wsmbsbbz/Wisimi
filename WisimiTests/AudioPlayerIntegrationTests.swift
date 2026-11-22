@@ -8,7 +8,7 @@ import Testing
 @MainActor
 struct AudioPlayerIntegrationTests {
     private static func makePlayer() -> WorkAudioPlayer {
-        let source = WorkSource(online: OnlineWorkSource(client: makeStubClient()), library: .shared)
+        let source = WorkSource(client: makeStubClient(), library: .shared)
         return WorkAudioPlayer(source: source, ttsSettings: TTSMixSettings())
     }
 
@@ -24,9 +24,9 @@ struct AudioPlayerIntegrationTests {
         """
         let lrc = "[00:01.50]hello\n[00:03.00]next"
 
-        #expect(WorkAudioPlayer.parseSubtitles(vtt).first?.start == 1)
-        #expect(WorkAudioPlayer.currentSubtitleIndex(at: 3.5, in: WorkAudioPlayer.parseSubtitles(vtt)) == 0)
-        let lines = WorkAudioPlayer.parseSubtitles(lrc)
+        #expect(SubtitleParser.parse(vtt).first?.start == 1)
+        #expect(WorkAudioPlayer.currentSubtitleIndex(at: 3.5, in: SubtitleParser.parse(vtt)) == 0)
+        let lines = SubtitleParser.parse(lrc)
         #expect(lines.count == 2)
         #expect(lines[0].end == 3)
         #expect(WorkAudioPlayer.currentSubtitleIndex(at: 2.9, in: lines) == 0)

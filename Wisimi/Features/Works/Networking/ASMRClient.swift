@@ -3,6 +3,7 @@ import Foundation
 struct ASMRClient {
     private let baseURL = URL(string: "https://api.asmr-200.com/api")!
     private let decoder = JSONDecoder()
+    private let encoder = JSONEncoder()
     private let session: URLSession
 
     init(session: URLSession = .shared) { self.session = session }
@@ -233,7 +234,7 @@ struct ASMRClient {
     private func request<Body: Encodable>(url: URL, method: String, body: Body, token: String? = nil) throws -> URLRequest {
         var request = request(url: url, method: method, token: token)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
+        request.httpBody = try encoder.encode(body)
         return request
     }
 

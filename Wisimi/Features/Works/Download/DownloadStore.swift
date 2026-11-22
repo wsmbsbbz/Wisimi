@@ -83,11 +83,6 @@ final class DownloadStore: NSObject, URLSessionDownloadDelegate {
         self.library = library ?? (directory == nil ? LocalWorkLibrary.shared : nil)
         self.availableCapacityProvider = availableCapacity ?? { Self.defaultAvailableCapacity(at: resolvedDirectory) }
         super.init()
-        if directory == nil {
-            let legacy = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Downloads", isDirectory: true)
-            try? FileManager.default.removeItem(at: legacy)
-        }
         do {
             try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
             var excluded = self.directory

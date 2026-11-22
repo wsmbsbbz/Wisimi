@@ -4,7 +4,6 @@ struct SimilarWorksSection: View {
     let state: SimilarWorksState
     let onSelect: (WorkReference) -> Void
     let onReposition: () -> Void
-    @State private var requestTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -24,7 +23,7 @@ struct SimilarWorksSection: View {
 
             if state.isRetrying && state.previewWorks.isEmpty {
                 ProgressView("正在重试…")
-            } else if state.page.errorMessage != nil {
+            } else {
                 retryNotice
             }
 
@@ -34,14 +33,12 @@ struct SimilarWorksSection: View {
                 if state.page.works.isEmpty && !state.page.isLoading && state.page.errorMessage == nil {
                     Text("本页暂无相似作品").foregroundStyle(.secondary)
                 }
-                if state.page.errorMessage != nil { retryNotice }
                 pagination
             }
         }
         .onChange(of: state.page.currentPage) {
             if state.isExpanded { onReposition() }
         }
-        .onDisappear { requestTask?.cancel() }
     }
 
     private var title: some View {
@@ -51,7 +48,7 @@ struct SimilarWorksSection: View {
     @ViewBuilder private var retryNotice: some View {
         if let error = state.page.errorMessage {
             InlineRetryView(message: "相似作品加载失败：\(error)") {
-                runRequest { await state.retry() }
+                Task { await state.retry() }
             }
         }
     }
@@ -67,7 +64,7 @@ struct SimilarWorksSection: View {
                 .contentShape(.rect)
         }
         .buttonStyle(PressFeedbackButtonStyle())
-        .disabled(state.previewWorks.isEmpty || state.page.isLoading)
+        .disabled(state.previewWorks.isEmpty || (!state.isExpanded && state.page.isLoading))
         .accessibilityValue(state.isExpanded ? "已展开" : "已收起")
     }
 
@@ -77,15 +74,7 @@ struct SimilarWorksSection: View {
             totalPages: state.page.pagination?.totalPages,
             isLoading: state.page.isLoading
         ) { number in
-            runRequest { await state.loadPage(number) }
-        }
-    }
-
-    private func runRequest(_ operation: @escaping @MainActor () async -> Void) {
-        guard requestTask == nil else { return }
-        requestTask = Task {
-            defer { requestTask = nil }
-            await operation()
+            Task { await state.loadPage(number) }
         }
     }
 }
