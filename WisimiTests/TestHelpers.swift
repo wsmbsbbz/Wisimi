@@ -146,3 +146,49 @@ func makeStubClient() -> ASMRClient {
     configuration.protocolClasses = [HTTPStub.self]
     return ASMRClient(session: URLSession(configuration: configuration))
 }
+
+final class InMemoryKeychain: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String: Data] = [:]
+
+    private func key(for query: [String: Any]) -> String {
+        let service = query[kSecAttrService as String] as? String ?? ""
+        let account = query[kSecAttrAccount as String] as? String ?? ""
+        return "\(service)::\(account)"
+    }
+
+    var operations: KeychainOperations {
+        KeychainOperations(
+            read: { [weak self] query in
+                guard let self else { return (errSecItemNotFound, nil) }
+                lock.lock(); defer { lock.unlock() }
+                guard let data = entries[key(for: query)] else { return (errSecItemNotFound, nil) }
+                return (errSecSuccess, data)
+            },
+            update: { [weak self] query, attributes in
+                guard let self else { return errSecItemNotFound }
+                lock.lock(); defer { lock.unlock() }
+                let k = key(for: query)
+                guard entries[k] != nil else { return errSecItemNotFound }
+                if let data = attributes[kSecValueData as String] as? Data {
+                    entries[k] = data
+                }
+                return errSecSuccess
+            },
+            add: { [weak self] attributes in
+                guard let self else { return errSecAllocate }
+                lock.lock(); defer { lock.unlock() }
+                let k = key(for: attributes)
+                guard entries[k] == nil else { return errSecDuplicateItem }
+                entries[k] = attributes[kSecValueData as String] as? Data ?? Data()
+                return errSecSuccess
+            },
+            delete: { [weak self] query in
+                guard let self else { return errSecItemNotFound }
+                lock.lock(); defer { lock.unlock() }
+                let k = key(for: query)
+                return entries.removeValue(forKey: k) != nil ? errSecSuccess : errSecItemNotFound
+            }
+        )
+    }
+}

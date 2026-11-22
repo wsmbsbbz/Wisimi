@@ -292,7 +292,11 @@ struct TTSTests {
         let restored = TTSMixSettings(defaults: defaults)
         #expect(restored.configuration == settings.configuration && restored.isEnabled && restored.volume == 0)
 
-        let tokenStore = OpenRouterTokenStore(service: "wisimi.refactor-token.\(UUID().uuidString)")
+        let keychain = InMemoryKeychain()
+        let tokenStore = OpenRouterTokenStore(
+            service: "wisimi.refactor-token.\(UUID().uuidString)",
+            operations: keychain.operations
+        )
         defer { try? tokenStore.delete() }
         let http = URLSessionConfiguration.ephemeral
         http.protocolClasses = [HTTPStub.self]
@@ -321,7 +325,12 @@ struct TTSTests {
     }
 
     @Test func keychainItemAndErrorMapping() throws {
-        let store = KeychainItem(service: "wisimi.refactor.\(UUID().uuidString)", account: "test")
+        let keychain = InMemoryKeychain()
+        let store = KeychainItem(
+            service: "wisimi.refactor.\(UUID().uuidString)",
+            account: "test",
+            operations: keychain.operations
+        )
         defer { try? store.delete() }
         #expect(try store.load() == nil)
         try store.save(Data("first".utf8))
@@ -335,7 +344,8 @@ struct TTSTests {
             service: store.service,
             account: store.account,
             accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            synchronizable: false
+            synchronizable: false,
+            operations: keychain.operations
         )
         try restricted.save(Data("retained".utf8))
 
@@ -361,7 +371,11 @@ struct TTSTests {
     }
 
     @Test func openRouterTokenStore() throws {
-        let basic = OpenRouterTokenStore(service: "wisimi.openrouter.self-check.\(UUID().uuidString)")
+        let keychain = InMemoryKeychain()
+        let basic = OpenRouterTokenStore(
+            service: "wisimi.openrouter.self-check.\(UUID().uuidString)",
+            operations: keychain.operations
+        )
         defer { try? basic.delete() }
         #expect(basic.isConfigured == false)
         try basic.save("self-check-first")
@@ -372,7 +386,7 @@ struct TTSTests {
         #expect(basic.isConfigured == false)
 
         let service = "wisimi.refactor-token-errors.\(UUID().uuidString)"
-        let token = OpenRouterTokenStore(service: service)
+        let token = OpenRouterTokenStore(service: service, operations: keychain.operations)
         defer { try? token.delete() }
         var storedAccessibility: CFString?
         var storedValue: Data? = Data("existing-token".utf8)
@@ -404,7 +418,7 @@ struct TTSTests {
         do { try token.save("  "); Issue.record("Empty token must fail") }
         catch let error as OpenRouterTokenStoreError { #expect(error.errorDescription != nil) }
 
-        let raw = KeychainItem(service: service, account: "api-token", synchronizable: false)
+        let raw = KeychainItem(service: service, account: "api-token", synchronizable: false, operations: keychain.operations)
         try raw.save(Data([0xff]))
         do { _ = try token.load(); Issue.record("Malformed stored token must fail") }
         catch let error as OpenRouterTokenStoreError { #expect(error.errorDescription != nil) }
